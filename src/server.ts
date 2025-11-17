@@ -15,7 +15,6 @@ import type {
 
 // Configuration (hardcoded, no .env needed)
 const PORT = 3000;
-const PHOTOS_DIR = './sessions';
 const AUTH_INFO_DIR = './auth_info';
 
 // Get current file directory for ESM
@@ -126,7 +125,7 @@ app.post('/api/session/send', async (req, res) => {
   res.json(response);
 });
 
-// Reset session - clear photos and delete files from sessions/current/
+// Reset session - clear photos and delete files from session/
 app.post('/api/session/reset', async (req, res) => {
   try {
     // Clear in-memory photos
@@ -135,16 +134,16 @@ app.post('/api/session/reset', async (req, res) => {
       currentSession.active = true;
     }
 
-    // Delete all files in sessions/current/ directory
+    // Delete all files in session/ directory
     const { readdir, unlink } = await import('node:fs/promises');
-    const sessionDir = join(process.cwd(), 'sessions', 'current');
+    const sessionDir = join(process.cwd(), 'session');
 
     try {
       const files = await readdir(sessionDir);
       await Promise.all(
         files.map(file => unlink(join(sessionDir, file)))
       );
-      console.log(`[Reset] Deleted ${files.length} photos from sessions/current/`);
+      console.log(`[Reset] Deleted ${files.length} photos from session/`);
     } catch (err) {
       // Directory might not exist yet, that's ok
       console.log('[Reset] No photos to delete');
@@ -173,9 +172,9 @@ app.get('/api/camera/status', (req, res) => {
 });
 
 // Serve photo files
-app.get('/photos/:sessionId/:filename', (req, res) => {
-  const { sessionId, filename } = req.params;
-  const photoPath = join(__dirname, '..', PHOTOS_DIR, sessionId, filename);
+app.get('/photos/:filename', (req, res) => {
+  const { filename } = req.params;
+  const photoPath = join(process.cwd(), 'session', filename);
 
   res.sendFile(photoPath, (err) => {
     if (err) {
@@ -212,7 +211,7 @@ httpServer.listen(PORT, () => {
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   console.log(`📱 Mobile UI:  http://localhost:${PORT}`);
   console.log(`🔌 WebSocket:  ws://localhost:${PORT}`);
-  console.log(`📁 Photos Dir: ${PHOTOS_DIR}`);
+  console.log(`📁 Photos Dir: ./session`);
   console.log(`🔐 Auth Dir:   ${AUTH_INFO_DIR}`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 });
@@ -223,6 +222,19 @@ process.on('SIGINT', async () => {
 
   // Stop camera service
   await cameraService.stop();
+
+  // Clean up session directory
+  try {
+    const { readdir, unlink } = await import('node:fs/promises');
+    const sessionDir = join(process.cwd(), 'session');
+    const files = await readdir(sessionDir);
+    await Promise.all(
+      files.map(file => unlink(join(sessionDir, file)))
+    );
+    console.log(`[Server] Cleaned up ${files.length} photos from session/`);
+  } catch (err) {
+    // Directory might not exist, that's ok
+  }
 
   httpServer.close(() => {
     console.log('[Server] HTTP server closed');

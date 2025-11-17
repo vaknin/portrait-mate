@@ -44,22 +44,20 @@ Street/portrait photography workflow for shooting strangers and instantly sendin
 ## Project Structure
 
 ```
-photo-whatsapp-app/
+photo-taker-sender/
 ├── src/
 │   ├── server.ts           # Main Express server
 │   ├── services/
-│   │   ├── whatsapp.ts     # Baileys WhatsApp service
-│   │   ├── camera.ts       # gphoto2 camera control
-│   │   └── photoManager.ts # Photo storage/management
+│   │   ├── camera.ts       # gphoto2 camera control & monitoring
+│   │   └── whatsapp.ts     # Baileys WhatsApp integration (Phase 4)
 │   └── types/
 │       └── index.ts        # TypeScript type definitions
 ├── public/                 # Frontend files (served statically)
 │   ├── index.html          # Main UI
 │   ├── style.css           # Styling
 │   └── app.js              # Frontend JavaScript
-├── sessions/               # Active photo sessions
-│   └── [session-id]/       # Per-session folders
-│       └── photo_*.jpg     # Captured photos
+├── session/                # All captured photos stored here
+│   └── photo_*.jpg         # Photos from camera (auto-saved)
 ├── auth_info/              # Baileys auth state (gitignored)
 ├── package.json            # Dependencies (type: module for ESM)
 ├── tsconfig.json           # TypeScript configuration
@@ -183,19 +181,20 @@ photo-whatsapp-app/
 **Bun server manages gphoto2 automatically** - no manual terminal commands needed.
 
 The `camera.ts` service spawns and monitors gphoto2 using `child_process`:
-- Command: `gphoto2 --set-config capturetarget=1 --wait-event-and-download --keep --filename sessions/[session-id]/photo_%H%M%S.jpg`
+- Command: `gphoto2 --set-config capturetarget=1 --capture-tethered --keep --filename session/photo_%H%M%S.jpg`
 - `--set-config capturetarget=1` - Save to memory card (prevents camera "busy" errors)
+- `--capture-tethered` - Wait for shutter release and auto-download
 - `--keep` - Keep originals on SD card as backup
 - Downloads only JPG files (skips RAW if camera set to RAW+JPG)
-- Photos remain on SD card and are backed up to laptop
+- Photos save directly to `session/` folder on laptop
 - Timestamp pattern `%H%M%S` prevents filename conflicts
-- Server spawns gphoto2 as child process on session start
+- Server spawns gphoto2 as child process on startup (runs continuously)
 - Monitors stdout/stderr for "Saving file as" events
 - Emits Socket.io event to frontend when photo downloaded
-- When camera disconnects (process exits), poll every 5s with `gphoto2 --auto-detect`
+- When camera disconnects (process exits), automatically retries every 3s
 - Auto-restart gphoto2 when camera reconnects
 - Emit camera connection status to frontend
-- Use SIGUSR2 signal for graceful shutdown when session ends
+- Use SIGUSR2 signal for graceful shutdown
 
 **Why capturetarget=1 fixes "busy" issue:**
 - Default (capturetarget=0) uses camera's internal RAM buffer
@@ -211,12 +210,18 @@ The `camera.ts` service spawns and monitors gphoto2 using `child_process`:
 
 ### Photo Storage
 ```
-sessions/
-└── session_TIMESTAMP/
-    ├── session.json        # { phone, timestamp, photos: [{path, selected}] }
-    └── photo_001.jpg
-    └── photo_002.jpg
+session/
+├── photo_164206.jpg       # Captured photo (HH:MM:SS timestamp)
+├── photo_164207.jpg
+└── photo_164208.jpg       # etc...
 ```
+
+**Simple single-folder approach:**
+- All photos from camera go to `session/` directory
+- Filename: `photo_{HH}{MM}{SS}.jpg` (unique by time)
+- No session ID complexity
+- Frontend requests `/photos/{filename}` to download
+- Server serves from `session/{filename}`
 
 ### Real-time Updates Flow
 1. Photographer presses camera shutter button
@@ -236,8 +241,10 @@ sessions/
 - `POST /api/session/start` - Start new session, returns session ID
 - `POST /api/session/photos/:id/select` - Toggle photo selection
 - `POST /api/session/send` - Send selected photos to phone number, end session
+- `POST /api/session/reset` - Reset session (clear photos array)
 - `GET /api/session/current` - Get current session (photos, selections, status)
-- `GET /photos/:sessionId/:filename` - Serve photo files
+- `GET /api/camera/status` - Get camera connection status
+- `GET /photos/:filename` - Serve photo files from `session/` folder
 
 ### WebSocket Events (Server → Client)
 - `photo-captured` - New photo available `{filename, path}`
@@ -405,3 +412,29 @@ gphoto2 --set-config capturetarget=1 --wait-event-and-download --keep --filename
 - ✅ Modal state transitions smooth
 - ✅ Responsive design (mobile/tablet/desktop)
 - ✅ Accessibility (focus styles, keyboard nav)
+
+---
+
+## Architecture Simplification (Session Flow Cleanup)
+
+### Old Complex Flow ❌
+- Camera saved to `sessions/current/` or `sessions/session_TIMESTAMP/`
+- Session ID mismatch between camera and server
+- Photo serving route: `GET /photos/:sessionId/:filename`
+- Path resolution issues causing request aborts
+- Multiple folders for different sessions
+
+### New Simple Flow ✅
+- All photos save to single `session/` folder
+- Camera service starts on server startup (continuous monitoring)
+- No session ID complexity - everything in one place
+- Photo serving route: `GET /photos/:filename`
+- Direct, reliable file serving
+- Clean separation: disk storage (`session/`) vs. in-memory session state
+
+**Benefits:**
+- No more path resolution bugs
+- Photos always accessible at predictable path
+- Simplified frontend image loading
+- Single point of truth for all photos
+- Easier to debug and maintain

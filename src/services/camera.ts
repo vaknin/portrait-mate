@@ -24,7 +24,6 @@ export class CameraService {
     private onPhotoCapture?: (filename: string, path: string) => void;
     private monitorProcess: ChildProcess | null = null;
     private reconnectTimer: NodeJS.Timeout | null = null;
-    private currentSessionId: string | null = null;
     private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
     private isShuttingDown = false;
     private readonly reconnectInterval: number = 3000; // Fixed 3 second interval
@@ -39,8 +38,6 @@ export class CameraService {
      * Start monitoring the camera (called once on server startup)
      */
     async start(): Promise<void> {
-        this.currentSessionId = 'session';
-
         // Create session directory
         const sessionDir = join(process.cwd(), 'session');
         await mkdir(sessionDir, { recursive: true });
@@ -88,7 +85,6 @@ export class CameraService {
         }
 
         // Reset state
-        this.currentSessionId = null;
         this.connectionState = ConnectionState.DISCONNECTED;
         this.isShuttingDown = false;
 
@@ -99,11 +95,6 @@ export class CameraService {
      * Start the gphoto2 monitoring process using event-based approach
      */
     private async startCameraMonitor(): Promise<void> {
-        if (!this.currentSessionId) {
-            console.error('[Camera] Cannot start monitor: No active session');
-            return;
-        }
-
         // Update state to CONNECTING
         this.setConnectionState(ConnectionState.CONNECTING);
 
@@ -124,20 +115,16 @@ export class CameraService {
      * Start event-based monitoring with gphoto2 --wait-event-and-download
      */
     private async startEventMonitor(): Promise<void> {
-        if (!this.currentSessionId) {
-            console.error('[Camera] Cannot start event monitor: No active session');
-            return;
-        }
-
         // Build filename pattern with session directory
         const sessionDir = join(process.cwd(), 'session');
         const filenamePattern = join(sessionDir, 'photo_%H%M%S.jpg');
 
         const args = [
-            '--set-config', 'capturetarget=1',  // Save to SD card
-            '--capture-tethered',               // Wait for shutter release and download
-            '--keep',                           // Keep files on SD after downloading
-            '--filename', filenamePattern       // Download JPG to local session/ folder
+            '--set-config', 'capturetarget=1',     // Save to SD card
+            '--set-config', 'imageformat=0',       // Force JPEG only (not RAW+JPG)
+            '--capture-tethered',                  // Wait for shutter release and download
+            '--keep',                              // Keep files on SD after downloading
+            '--filename', filenamePattern          // Download JPG to local session/ folder
         ];
 
         console.log(`[Camera] Starting event monitor: ${this.gphoto2Path} ${args.join(' ')}`);
@@ -219,7 +206,7 @@ export class CameraService {
             return;
         }
 
-        const photoPath = `/photos/current/${filename}`;
+        const photoPath = `/photos/${filename}`;
 
         console.log(`[Camera] 📷 Photo captured: ${filename}`);
 
@@ -352,7 +339,7 @@ export class CameraService {
         console.log(`[Camera] Will retry connection in ${this.reconnectInterval / 1000}s`);
 
         this.reconnectTimer = setTimeout(async () => {
-            if (this.isShuttingDown || !this.currentSessionId) {
+            if (this.isShuttingDown) {
                 return;
             }
 
@@ -381,10 +368,9 @@ export class CameraService {
     /**
      * Get current connection status
      */
-    public getStatus(): { connected: boolean; sessionId: string | null; state: string } {
+    public getStatus(): { connected: boolean; state: string } {
         return {
             connected: this.connectionState === ConnectionState.CONNECTED,
-            sessionId: this.currentSessionId,
             state: this.connectionState,
         };
     }
