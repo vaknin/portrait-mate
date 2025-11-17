@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a0a">
+    <title>Photo Sender</title>
+
+    <!-- PhotoSwipe CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <!-- Header with camera status and action buttons -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1 class="app-title">Photo Sender</h1>
+            <div class="header-right">
+                <div class="camera-status">
+                    <span class="status-dot" id="cameraStatusDot"></span>
+                    <span class="status-text" id="cameraStatusText">Camera</span>
+                </div>
+                <button class="btn btn-reset" id="resetBtn" type="button">Reset</button>
+                <button class="btn btn-send-header" id="sendBtnHeader" disabled type="button">
+                    <span class="btn-text">Send</span>
+                    <span class="selection-badge" id="selectionBadge">0</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="app-main">
+
+        <!-- Photo Gallery (Default Screen) -->
+        <section class="screen" id="galleryScreen">
+            <div class="screen-content">
+
+                <!-- Empty State -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-icon">📷</div>
+                    <h3 class="empty-title">Waiting for photos...</h3>
+                    <p class="empty-text">Photos will appear here as you capture them</p>
+                </div>
+
+                <!-- Photo Gallery Grid -->
+                <div class="photo-gallery" id="photoGallery">
+                    <div class="photo-grid" id="photoGrid">
+                        <!-- Photos will be added dynamically -->
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Phone Number Popup Modal -->
+    <div class="modal-overlay" id="phoneModal">
+        <div class="modal-container">
+            <!-- Phone Input State -->
+            <div class="modal-content" id="phoneInputState">
+                <h2 class="modal-title">Send Photos</h2>
+                <p class="modal-description">Enter recipient's phone number</p>
+
+                <form id="phoneForm" class="modal-form">
+                    <div class="form-group">
+                        <input
+                            type="tel"
+                            id="phoneInputModal"
+                            class="form-input"
+                            placeholder="05X-XXX-XXXX"
+                            required
+                            autocomplete="tel"
+                            inputmode="numeric"
+                            autofocus
+                        >
+                        <div class="input-error" id="phoneErrorModal"></div>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="sendSubmitBtn">Send</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Sending State -->
+            <div class="modal-content hidden" id="sendingState">
+                <div class="loading-spinner"></div>
+                <h3 class="modal-title">Sending photos...</h3>
+                <p class="modal-description" id="sendingProgress">0 of 0</p>
+            </div>
+
+            <!-- Success State -->
+            <div class="modal-content hidden" id="successState">
+                <div class="success-icon">✓</div>
+                <h3 class="modal-title">Images sent!</h3>
+                <p class="modal-description" id="successMessage"></p>
+                <button class="btn btn-primary btn-large" id="closeSuccessBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Dialog -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal-container modal-small">
+            <div class="modal-content">
+                <h2 class="modal-title">Reset Session?</h2>
+                <p class="modal-description">This will clear the current gallery and start a new session. Photos will remain on disk.</p>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="confirmCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmResetBtn">Reset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.io Client -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- PhotoSwipe Core (ES Modules) -->
+    <script type="module">
+        import PhotoSwipeLightbox from 'https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe-lightbox.esm.min.js';
+        import PhotoSwipe from 'https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe.esm.min.js';
+
+        // Make available globally for app.js
+        window.PhotoSwipeLightbox = PhotoSwipeLightbox;
+        window.PhotoSwipe = PhotoSwipe;
+    </script>
+
+    <!-- App JavaScript -->
+    <script src="/app.js"></script>
+</body>
+</html>
