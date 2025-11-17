@@ -245,16 +245,30 @@ async function resetSession() {
     // Close confirmation modal
     closeConfirmModal();
 
-    // Clear UI
-    state.photos = [];
-    updatePhotoGallery();
-    updateSelectionCount();
-    updateSendButton();
+    try {
+        // Call reset endpoint to clear photos from server and delete files
+        const response = await fetch('/api/session/reset', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
 
-    // Start new session
-    await startSession();
+        if (!response.ok) {
+            throw new Error('Failed to reset session');
+        }
 
-    showToast('Session reset', 'info');
+        // Clear local UI state
+        state.photos = [];
+        updatePhotoGallery();
+        updateSelectionCount();
+        updateSendButton();
+
+        showToast('Session reset', 'info');
+    } catch (error) {
+        console.error('Reset failed:', error);
+        showToast('Failed to reset session', 'error');
+    }
 }
 
 // ================================

@@ -38,7 +38,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 auth_info/
 
 # Photo session data (can be large)
-sessions/
+session/
 
 # Compiled binary
 photo-sender

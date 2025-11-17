@@ -48,12 +48,18 @@ const cameraService = new CameraService({
 app.use(express.json());
 app.use(express.static(join(__dirname, '../public')));
 
-// In-memory session storage (for Phase 1)
+// In-memory photo storage
 let currentSession: Session | null = null;
+
+// Start camera monitoring once on server startup
+(async () => {
+  await cameraService.start();
+  console.log('[Camera] Monitoring started on server startup');
+})();
 
 // API Routes
 
-// Start a new session
+// Start a new session (just creates session object, camera already running)
 app.post('/api/session/start', async (req, res) => {
   const sessionId = `session_${Date.now()}`;
   currentSession = {
@@ -62,9 +68,6 @@ app.post('/api/session/start', async (req, res) => {
     photos: [],
     active: true,
   };
-
-  // Start camera monitoring
-  await cameraService.startSession(sessionId);
 
   const response: StartSessionResponse = { sessionId };
   res.json(response);
@@ -117,13 +120,42 @@ app.post('/api/session/send', async (req, res) => {
 
   io.emit('send-complete', { success: true, count: selectedPhotos.length });
 
-  // End session after sending
+  // End session after sending (camera keeps running)
   currentSession.active = false;
 
-  // Stop camera monitoring
-  await cameraService.stopSession();
-
   res.json(response);
+});
+
+// Reset session - clear photos and delete files from sessions/current/
+app.post('/api/session/reset', async (req, res) => {
+  try {
+    // Clear in-memory photos
+    if (currentSession) {
+      currentSession.photos = [];
+      currentSession.active = true;
+    }
+
+    // Delete all files in sessions/current/ directory
+    const { readdir, unlink } = await import('node:fs/promises');
+    const sessionDir = join(process.cwd(), 'sessions', 'current');
+
+    try {
+      const files = await readdir(sessionDir);
+      await Promise.all(
+        files.map(file => unlink(join(sessionDir, file)))
+      );
+      console.log(`[Reset] Deleted ${files.length} photos from sessions/current/`);
+    } catch (err) {
+      // Directory might not exist yet, that's ok
+      console.log('[Reset] No photos to delete');
+    }
+
+    res.json({ success: true });
+    console.log('[Reset] Session reset complete');
+  } catch (error) {
+    console.error('[Reset] Error:', error);
+    res.status(500).json({ error: 'Failed to reset session' });
+  }
 });
 
 // Get current session
@@ -148,7 +180,10 @@ app.get('/photos/:sessionId/:filename', (req, res) => {
   res.sendFile(photoPath, (err) => {
     if (err) {
       console.error(`[Photos] Error serving ${filename}:`, err);
-      res.status(404).json({ error: 'Photo not found' });
+      // Only send error response if headers haven't been sent yet
+      if (!res.headersSent) {
+        res.status(404).json({ error: 'Photo not found' });
+      }
     }
   });
 });
@@ -187,7 +222,7 @@ process.on('SIGINT', async () => {
   console.log('\n[Server] Shutting down gracefully...');
 
   // Stop camera service
-  await cameraService.stopSession();
+  await cameraService.stop();
 
   httpServer.close(() => {
     console.log('[Server] HTTP server closed');
