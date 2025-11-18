@@ -406,7 +406,7 @@ body {
 .photo-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: var(--spacing-md);
+    gap: 4px;
     overflow-y: auto;
     max-height: calc(100vh - 200px);
     padding-bottom: var(--spacing-lg);
@@ -432,8 +432,8 @@ body {
 .photo-card {
     position: relative;
     aspect-ratio: 3/4;
-    background-color: var(--color-surface);
-    border-radius: 8px;
+    background-color: transparent;
+    border-radius: 0;
     overflow: hidden;
     cursor: pointer;
     transition: transform var(--transition-fast);
@@ -447,58 +447,20 @@ body {
 .photo-card img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
     display: block;
-    background-color: var(--color-bg);
 }
 
-.photo-card .photo-overlay {
+/* Selected state overlay */
+.photo-card.selected::after {
+    content: '';
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: rgba(0, 0, 0, 0.3);
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-}
-
-.photo-card.selected .photo-overlay {
-    opacity: 1;
-}
-
-.photo-card .photo-checkbox {
-    position: absolute;
-    top: var(--spacing-sm);
-    right: var(--spacing-sm);
-    width: 28px;
-    height: 28px;
-    background-color: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(10px);
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
-}
-
-.photo-card.selected .photo-checkbox {
-    background-color: var(--color-accent);
-    border-color: var(--color-accent);
-}
-
-.photo-card .photo-checkbox::after {
-    content: '✓';
-    color: white;
-    font-size: 16px;
-    font-weight: 700;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-}
-
-.photo-card.selected .photo-checkbox::after {
-    opacity: 1;
+    background-color: rgba(0, 0, 0, 0.15);
+    pointer-events: none;
 }
 
 /* ================================
@@ -720,6 +682,25 @@ body {
     background-color: rgba(42, 42, 42, 0.9) !important;
 }
 
+/* Custom select button in PhotoSwipe */
+.pswp__button--select-button {
+    opacity: 0.7;
+    transition: opacity var(--transition-fast), background-color var(--transition-fast);
+}
+
+.pswp__button--select-button:hover {
+    opacity: 1;
+}
+
+.pswp__button--select-button.pswp__button--selected {
+    background-color: rgba(76, 175, 80, 0.9) !important;
+    opacity: 1;
+}
+
+.pswp__button--select-button.pswp__button--selected:hover {
+    background-color: rgba(76, 175, 80, 1) !important;
+}
+
 .pswp__counter {
     color: var(--color-text);
 }
@@ -737,19 +718,17 @@ body {
 .photo-card:focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 2px;
-    border-radius: 8px;
 }
 
 /* Photo Checkbox as separate button */
 .photo-checkbox {
     position: absolute;
-    top: var(--spacing-sm);
-    right: var(--spacing-sm);
-    width: 32px;
-    height: 32px;
-    background-color: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(10px);
-    border: 2px solid rgba(255, 255, 255, 0.4);
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    background-color: rgba(255, 255, 255, 0.9);
+    border: 2px solid rgba(0, 0, 0, 0.2);
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -777,7 +756,7 @@ body {
 .photo-checkbox::after {
     content: '✓';
     color: white;
-    font-size: 18px;
+    font-size: 14px;
     font-weight: 700;
     opacity: 0;
     transition: opacity var(--transition-fast);

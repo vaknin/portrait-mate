@@ -4,6 +4,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { CameraService } from './services/camera.ts';
+import { WhatsAppService } from './services/whatsapp.ts';
 import type {
   StartSessionResponse,
   SelectPhotoRequest,
@@ -43,6 +44,12 @@ const cameraService = new CameraService({
   },
 });
 
+// Initialize WhatsApp service
+const whatsappService = new WhatsAppService({
+  io,
+  authDir: AUTH_INFO_DIR,
+});
+
 // Middleware
 app.use(express.json());
 app.use(express.static(join(__dirname, '../public')));
@@ -50,10 +57,32 @@ app.use(express.static(join(__dirname, '../public')));
 // In-memory photo storage
 let currentSession: Session | null = null;
 
-// Start camera monitoring once on server startup
+/**
+ * Convert phone number to WhatsApp JID format
+ * Israeli: 0504203492 → 972504203492@s.whatsapp.net
+ * International: +1234567890 → 1234567890@s.whatsapp.net
+ */
+function convertToWhatsAppJID(phone: string): string {
+  const cleaned = phone.replace(/[\s-]/g, '');
+
+  if (cleaned.startsWith('0') && cleaned.length === 10) {
+    return `972${cleaned.slice(1)}@s.whatsapp.net`;
+  }
+
+  if (cleaned.startsWith('+')) {
+    return `${cleaned.slice(1)}@s.whatsapp.net`;
+  }
+
+  return `${cleaned}@s.whatsapp.net`;
+}
+
+// Start camera and WhatsApp services on server startup
 (async () => {
   await cameraService.start();
   console.log('[Camera] Monitoring started on server startup');
+
+  await whatsappService.start();
+  console.log('[WhatsApp] Service started on server startup');
 })();
 
 // API Routes
@@ -98,6 +127,11 @@ app.post('/api/session/photos/:id/select', (req, res) => {
 app.post('/api/session/send', async (req, res) => {
   const { phone, sessionId } = req.body as SendPhotosRequest;
 
+  // Validate sessionId format
+  if (!sessionId || typeof sessionId !== 'string' || !sessionId.startsWith('session_')) {
+    return res.status(400).json({ error: 'Invalid session ID' });
+  }
+
   if (!currentSession || currentSession.id !== sessionId) {
     return res.status(404).json({ error: 'Session not found' });
   }
@@ -108,26 +142,60 @@ app.post('/api/session/send', async (req, res) => {
     return res.status(400).json({ error: 'No photos selected' });
   }
 
-  // TODO: Implement WhatsApp sending in Phase 4
-  console.log(`[Send] Would send ${selectedPhotos.length} photos to ${phone}`);
+  // Convert phone to WhatsApp JID format
+  const jid = convertToWhatsAppJID(phone);
+  console.log(`[Send] Sending ${selectedPhotos.length} photos to ${phone} (JID: ${jid})`);
 
-  // Simulate sending (remove in Phase 4)
-  const response: SendPhotosResponse = {
-    success: true,
-    count: selectedPhotos.length,
-  };
+  // Get absolute file paths for selected photos
+  const photoPaths = selectedPhotos.map(photo =>
+    join(process.cwd(), 'session', photo.filename)
+  );
 
-  io.emit('send-complete', { success: true, count: selectedPhotos.length });
+  try {
+    // Send photos via WhatsApp
+    const success = await whatsappService.sendPhotos(jid, photoPaths);
 
-  // End session after sending (camera keeps running)
-  currentSession.active = false;
+    if (!success) {
+      const errorResponse: SendPhotosResponse = {
+        success: false,
+        count: 0,
+        error: 'Failed to send photos via WhatsApp',
+      };
+      io.emit('send-complete', { success: false, count: 0, error: 'Failed to send photos' });
+      return res.status(500).json(errorResponse);
+    }
 
-  res.json(response);
+    // Success! Emit completion event
+    io.emit('send-complete', { success: true, count: selectedPhotos.length });
+
+    // End session after sending (camera keeps running)
+    currentSession.active = false;
+
+    const response: SendPhotosResponse = {
+      success: true,
+      count: selectedPhotos.length,
+    };
+    res.json(response);
+
+    console.log(`[Send] Successfully sent ${selectedPhotos.length} photos to ${phone}`);
+  } catch (error) {
+    console.error('[Send] Error sending photos:', error);
+    const errorResponse: SendPhotosResponse = {
+      success: false,
+      count: 0,
+      error: 'Internal server error',
+    };
+    io.emit('send-complete', { success: false, count: 0, error: 'Internal server error' });
+    res.status(500).json(errorResponse);
+  }
 });
 
 // Reset session - clear photos and delete files from session/
 app.post('/api/session/reset', async (req, res) => {
   try {
+    // Pause camera to prevent race condition during file deletion
+    cameraService.pause();
+
     // Clear in-memory photos
     if (currentSession) {
       currentSession.photos = [];
@@ -149,10 +217,17 @@ app.post('/api/session/reset', async (req, res) => {
       console.log('[Reset] No photos to delete');
     }
 
+    // Resume camera
+    cameraService.resume();
+
     res.json({ success: true });
     console.log('[Reset] Session reset complete');
   } catch (error) {
     console.error('[Reset] Error:', error);
+
+    // Make sure to resume camera even if error occurred
+    cameraService.resume();
+
     res.status(500).json({ error: 'Failed to reset session' });
   }
 });
@@ -171,20 +246,34 @@ app.get('/api/camera/status', (req, res) => {
   res.json(status);
 });
 
+// Get WhatsApp status
+app.get('/api/whatsapp/status', (req, res) => {
+  const status = whatsappService.getStatus();
+  res.json(status);
+});
+
 // Serve photo files
-app.get('/photos/:filename', (req, res) => {
+app.get('/photos/:filename', async (req, res) => {
   const { filename } = req.params;
+
+  // Security: prevent directory traversal
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    console.warn(`[Photos] Invalid filename attempt: ${filename}`);
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+
   const photoPath = join(process.cwd(), 'session', filename);
 
-  res.sendFile(photoPath, (err) => {
-    if (err) {
-      console.error(`[Photos] Error serving ${filename}:`, err);
-      // Only send error response if headers haven't been sent yet
-      if (!res.headersSent) {
-        res.status(404).json({ error: 'Photo not found' });
-      }
-    }
-  });
+  try {
+    // Check file exists before sending
+    const { access } = await import('node:fs/promises');
+    await access(photoPath);
+
+    res.sendFile(photoPath);
+  } catch (err) {
+    console.error(`[Photos] File not found: ${filename}`);
+    res.status(404).json({ error: 'Photo not found' });
+  }
 });
 
 // Socket.io connection handling
@@ -199,6 +288,10 @@ io.on('connection', (socket) => {
   // Send camera status to new client
   const cameraStatus = cameraService.getStatus();
   socket.emit('camera-status', { connected: cameraStatus.connected });
+
+  // Send WhatsApp status to new client
+  const whatsappStatus = whatsappService.getStatus();
+  socket.emit('whatsapp-status', { connected: whatsappStatus.connected });
 
   socket.on('disconnect', () => {
     console.log('[WebSocket] Client disconnected:', socket.id);
@@ -220,26 +313,39 @@ httpServer.listen(PORT, () => {
 process.on('SIGINT', async () => {
   console.log('\n[Server] Shutting down gracefully...');
 
-  // Stop camera service
-  await cameraService.stop();
+  // Force exit after 2 seconds if shutdown hangs
+  const forceExitTimer = setTimeout(() => {
+    console.log('[Server] Force exiting...');
+    process.exit(1);
+  }, 2000);
 
-  // Clean up session directory
   try {
-    const { readdir, unlink } = await import('node:fs/promises');
-    const sessionDir = join(process.cwd(), 'session');
-    const files = await readdir(sessionDir);
-    await Promise.all(
-      files.map(file => unlink(join(sessionDir, file)))
-    );
-    console.log(`[Server] Cleaned up ${files.length} photos from session/`);
-  } catch (err) {
-    // Directory might not exist, that's ok
-  }
+    // Disconnect all Socket.io clients
+    io.disconnectSockets();
 
-  httpServer.close(() => {
-    console.log('[Server] HTTP server closed');
+    // Stop camera service
+    await Promise.race([
+      cameraService.stop(),
+      new Promise(resolve => setTimeout(resolve, 500))
+    ]);
+
+    // Stop WhatsApp service
+    await Promise.race([
+      whatsappService.stop(),
+      new Promise(resolve => setTimeout(resolve, 500))
+    ]);
+
+    // Close HTTP server
+    httpServer.close();
+
+    clearTimeout(forceExitTimer);
+    console.log('[Server] Shutdown complete');
     process.exit(0);
-  });
+  } catch (error) {
+    console.error('[Server] Shutdown error:', error);
+    clearTimeout(forceExitTimer);
+    process.exit(1);
+  }
 });
 
 // Export for testing

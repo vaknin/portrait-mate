@@ -83,13 +83,25 @@ function convertToWhatsAppFormat(phone) {
 function getImageDimensions(src) {
     return new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => {
-            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+
+        const cleanup = () => {
+            img.onload = null;
+            img.onerror = null;
+            img.src = '';
         };
+
+        img.onload = () => {
+            const dims = { width: img.naturalWidth, height: img.naturalHeight };
+            cleanup();
+            resolve(dims);
+        };
+
         img.onerror = () => {
             // Default to Canon R8 portrait if load fails
+            cleanup();
             resolve({ width: 4000, height: 6000 });
         };
+
         img.src = src;
     });
 }
@@ -102,10 +114,20 @@ function initSocket() {
 
     state.socket.on('connect', () => {
         console.log('Connected to server');
+        showToast('Connected to server', 'success');
     });
 
     state.socket.on('disconnect', () => {
         console.log('Disconnected from server');
+
+        // If in sending state, show error
+        if (!elements.sendingState.classList.contains('hidden')) {
+            showToast('Connection lost. Please try again.', 'error');
+            closePhoneModal();
+        }
+
+        // Show reconnecting indicator
+        showToast('Reconnecting to server...', 'error');
     });
 
     // Camera status updates
@@ -297,10 +319,66 @@ function initPhotoSwipe() {
         }
     });
 
+    // Add custom select button to PhotoSwipe UI
+    lightbox.on('uiRegister', function() {
+        lightbox.pswp.ui.registerElement({
+            name: 'select-button',
+            order: 9, // Position after zoom button
+            isButton: true,
+            html: '<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true" class="pswp__icn"><path d="M26 6L12 20l-6-6" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            onClick: (event, el, pswp) => {
+                // Get current photo index
+                const currentIndex = pswp.currIndex;
+
+                // Toggle selection
+                state.photos[currentIndex].selected = !state.photos[currentIndex].selected;
+
+                // Update button visual state
+                updateSelectButtonState(el, state.photos[currentIndex].selected);
+
+                // Update gallery UI
+                updatePhotoGallery();
+                updateSelectionCount();
+                updateSendButton();
+            }
+        });
+    });
+
+    // Update select button state when slide changes
+    lightbox.on('change', () => {
+        const currentIndex = lightbox.pswp.currIndex;
+        const selectButton = lightbox.pswp.element.querySelector('.pswp__button--select-button');
+
+        if (selectButton && state.photos[currentIndex]) {
+            updateSelectButtonState(selectButton, state.photos[currentIndex].selected);
+        }
+    });
+
+    // Set initial select button state when lightbox opens
+    lightbox.on('afterInit', () => {
+        const currentIndex = lightbox.pswp.currIndex;
+        const selectButton = lightbox.pswp.element.querySelector('.pswp__button--select-button');
+
+        if (selectButton && state.photos[currentIndex]) {
+            updateSelectButtonState(selectButton, state.photos[currentIndex].selected);
+        }
+    });
+
     lightbox.init();
     state.lightbox = lightbox;
 
     return lightbox;
+}
+
+// Helper function to update select button visual state
+function updateSelectButtonState(buttonElement, isSelected) {
+    if (isSelected) {
+        buttonElement.classList.add('pswp__button--selected');
+        buttonElement.setAttribute('aria-label', 'Deselect photo');
+    } else {
+        buttonElement.classList.remove('pswp__button--selected');
+        buttonElement.setAttribute('aria-label', 'Select photo');
+    }
 }
 
 async function addPhoto(photoData) {
@@ -353,11 +431,15 @@ function createPhotoCard(photo, index) {
         <a href="${photo.path}"
            data-pswp-width="${photo.width}"
            data-pswp-height="${photo.height}"
-           class="photo-card"
+           class="photo-card ${photo.selected ? 'selected' : ''}"
            target="_blank"
            rel="noopener">
-            <img src="${photo.path}" alt="${photo.filename}" loading="lazy">
-            <div class="photo-overlay"></div>
+            <img src="${photo.path}"
+                 alt="${photo.filename}"
+                 width="${photo.width}"
+                 height="${photo.height}"
+                 loading="lazy"
+                 decoding="async">
         </a>
         <button class="photo-checkbox"
                 data-index="${index}"
@@ -389,16 +471,17 @@ function createPhotoCard(photo, index) {
 // ================================
 async function togglePhotoSelection(index) {
     const photo = state.photos[index];
+    const previousState = photo.selected;
     photo.selected = !photo.selected;
 
-    // Update UI immediately
+    // Update UI immediately (optimistic update)
     updatePhotoGallery();
     updateSelectionCount();
     updateSendButton();
 
     // Send to server
     try {
-        await fetch(`/api/session/photos/${photo.filename}/select`, {
+        const response = await fetch(`/api/session/photos/${photo.filename}/select`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -407,13 +490,20 @@ async function togglePhotoSelection(index) {
                 selected: photo.selected
             })
         });
+
+        if (!response.ok) {
+            throw new Error('Selection update failed');
+        }
     } catch (error) {
         console.error('Error updating selection:', error);
-        // Revert on error
-        photo.selected = !photo.selected;
+
+        // Revert and notify user
+        photo.selected = previousState;
         updatePhotoGallery();
         updateSelectionCount();
         updateSendButton();
+
+        showToast('Failed to update selection. Please try again.', 'error');
     }
 }
 
@@ -553,8 +643,7 @@ elements.cancelBtn.addEventListener('click', closePhoneModal);
 // Close success button
 elements.closeSuccessBtn.addEventListener('click', () => {
     closePhoneModal();
-    // Auto-reset session after successful send
-    resetSession();
+    // Session persists after sending - only reset when user clicks Reset button
 });
 
 // ================================

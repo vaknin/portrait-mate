@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { watch } from 'node:fs';
 import { mkdir, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Server as SocketIOServer } from 'socket.io';
@@ -24,8 +23,11 @@ export class CameraService {
     private onPhotoCapture?: (filename: string, path: string) => void;
     private monitorProcess: ChildProcess | null = null;
     private reconnectTimer: NodeJS.Timeout | null = null;
+    private killTimer: NodeJS.Timeout | null = null;
     private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
     private isShuttingDown = false;
+    private isPaused = false;
+    private isChecking = false;
     private readonly reconnectInterval: number = 3000; // Fixed 3 second interval
 
     constructor(config: CameraServiceConfig) {
@@ -56,6 +58,10 @@ export class CameraService {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        if (this.killTimer) {
+            clearTimeout(this.killTimer);
+            this.killTimer = null;
+        }
     }
 
     /**
@@ -73,12 +79,18 @@ export class CameraService {
             // Try SIGUSR2 for graceful shutdown, fallback to SIGTERM
             this.monitorProcess.kill('SIGUSR2');
 
+            // Clear any existing kill timer
+            if (this.killTimer) {
+                clearTimeout(this.killTimer);
+            }
+
             // If process doesn't exit in 5s, force kill
-            setTimeout(() => {
+            this.killTimer = setTimeout(() => {
                 if (this.monitorProcess && !this.monitorProcess.killed) {
                     console.log('[Camera] Process did not exit gracefully, forcing SIGTERM');
                     this.monitorProcess.kill('SIGTERM');
                 }
+                this.killTimer = null;
             }, 5000);
 
             this.monitorProcess = null;
@@ -115,6 +127,21 @@ export class CameraService {
      * Start event-based monitoring with gphoto2 --wait-event-and-download
      */
     private async startEventMonitor(): Promise<void> {
+        // Clean up any existing monitor process first
+        if (this.monitorProcess) {
+            console.log('[Camera] Cleaning up existing monitor process before restart...');
+
+            // Remove all event listeners to prevent ghost handlers
+            this.monitorProcess.removeAllListeners();
+
+            // Kill if still running
+            if (!this.monitorProcess.killed) {
+                this.monitorProcess.kill('SIGTERM');
+            }
+
+            this.monitorProcess = null;
+        }
+
         // Build filename pattern with session directory
         const sessionDir = join(process.cwd(), 'session');
         const filenamePattern = join(sessionDir, 'photo_%H%M%S.jpg');
@@ -164,6 +191,9 @@ export class CameraService {
         this.monitorProcess.on('close', (code) => {
             console.log(`[Camera] Monitor process exited with code ${code}`);
 
+            // Clear the process reference immediately
+            this.monitorProcess = null;
+
             if (!this.isShuttingDown) {
                 console.log('[Camera] Camera disconnected or process crashed, scheduling reconnect');
                 this.setConnectionState(ConnectionState.DISCONNECTED);
@@ -174,6 +204,10 @@ export class CameraService {
         // Handle process errors
         this.monitorProcess.on('error', (err) => {
             console.error('[Camera] Monitor process error:', err);
+
+            // Clear the process reference immediately
+            this.monitorProcess = null;
+
             if (!this.isShuttingDown) {
                 this.setConnectionState(ConnectionState.ERROR);
                 this.scheduleReconnect();
@@ -190,6 +224,12 @@ export class CameraService {
      * Example: "Saving file as sessions/session_123/photo_143052.jpg"
      */
     private parsePhotoEvent(line: string): void {
+        // Check if camera is paused (during reset)
+        if (this.isPaused) {
+            console.log('[Camera] Photo capture paused, skipping event');
+            return;
+        }
+
         // Extract filename from gphoto2 output
         const match = line.match(/Saving file as (.+\.jpe?g)/i);
 
@@ -245,6 +285,12 @@ export class CameraService {
         }
 
         console.error(`[Camera] Timeout waiting for file: ${fullPath}`);
+
+        // Emit error to frontend
+        this.io.emit('camera-error', {
+            error: 'Photo file not ready',
+            filename
+        });
     }
 
     /**
@@ -271,62 +317,77 @@ export class CameraService {
      * Uses --summary which requires camera to be accessible
      */
     private async checkCameraAvailable(): Promise<boolean> {
-        return new Promise((resolve) => {
-            // Use --summary instead of --auto-detect for more reliable check
-            const detect = spawn(this.gphoto2Path, ['--summary']);
+        // Prevent concurrent checks (gphoto2 uses exclusive locks)
+        if (this.isChecking) {
+            console.log('[Camera] Detection already in progress, skipping');
+            return false;
+        }
 
-            let output = '';
-            let errorOutput = '';
-            let resolved = false;
+        this.isChecking = true;
 
-            // Handle timeout
-            const timeout = setTimeout(() => {
-                if (!resolved && !detect.killed) {
-                    resolved = true;
-                    detect.kill();
-                    console.log('[Camera] Detection timed out');
-                    resolve(false);
-                }
-            }, 5000);
+        try {
+            return await new Promise((resolve) => {
+                // Use --summary instead of --auto-detect for more reliable check
+                const detect = spawn(this.gphoto2Path, ['--summary']);
 
-            detect.stdout?.on('data', (data: Buffer) => {
-                output += data.toString();
-            });
+                let output = '';
+                let errorOutput = '';
+                let resolved = false;
 
-            detect.stderr?.on('data', (data: Buffer) => {
-                errorOutput += data.toString();
-            });
-
-            detect.on('close', (code) => {
-                if (!resolved) {
-                    resolved = true;
-                    clearTimeout(timeout);
-
-                    // Check if command succeeded and returned camera info
-                    const hasCamera = code === 0 && output.length > 0;
-
-                    if (hasCamera) {
-                        console.log('[Camera] ✅ Camera detected and accessible');
-                    } else {
-                        console.log('[Camera] ❌ Camera not detected or not accessible');
-                        if (errorOutput) {
-                            console.log(`[Camera] Error: ${errorOutput.substring(0, 200)}`);
-                        }
+                // Handle timeout
+                const timeout = setTimeout(() => {
+                    if (!resolved && !detect.killed) {
+                        resolved = true;
+                        detect.kill();
+                        console.log('[Camera] Detection timed out');
+                        this.isChecking = false;
+                        resolve(false);
                     }
+                }, 5000);
 
-                    resolve(hasCamera);
-                }
-            });
+                detect.stdout?.on('data', (data: Buffer) => {
+                    output += data.toString();
+                });
 
-            detect.on('error', (err) => {
-                if (!resolved) {
-                    resolved = true;
-                    clearTimeout(timeout);
-                    console.error('[Camera] Detection error:', err);
-                    resolve(false);
-                }
+                detect.stderr?.on('data', (data: Buffer) => {
+                    errorOutput += data.toString();
+                });
+
+                detect.on('close', (code) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        this.isChecking = false;
+
+                        // Check if command succeeded and returned camera info
+                        const hasCamera = code === 0 && output.length > 0;
+
+                        if (hasCamera) {
+                            console.log('[Camera] ✅ Camera detected and accessible');
+                        } else {
+                            console.log('[Camera] ❌ Camera not detected or not accessible');
+                            if (errorOutput) {
+                                console.log(`[Camera] Error: ${errorOutput.substring(0, 200)}`);
+                            }
+                        }
+
+                        resolve(hasCamera);
+                    }
+                });
+
+                detect.on('error', (err) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        this.isChecking = false;
+                        console.error('[Camera] Detection error:', err);
+                        resolve(false);
+                    }
+                });
             });
-        });
+        } finally {
+            this.isChecking = false;
+        }
     }
 
     /**
@@ -373,5 +434,21 @@ export class CameraService {
             connected: this.connectionState === ConnectionState.CONNECTED,
             state: this.connectionState,
         };
+    }
+
+    /**
+     * Pause photo capture events (used during session reset)
+     */
+    public pause(): void {
+        this.isPaused = true;
+        console.log('[Camera] Photo capture paused');
+    }
+
+    /**
+     * Resume photo capture events
+     */
+    public resume(): void {
+        this.isPaused = false;
+        console.log('[Camera] Photo capture resumed');
     }
 }
