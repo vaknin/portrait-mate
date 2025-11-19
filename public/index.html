@@ -5,25 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#0a0a0a">
+    <meta name="theme-color" content="#050505">
     <title>Photo Sender</title>
 
+    <!-- Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <!-- PhotoSwipe CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe.css">
+    <link rel="stylesheet" href="/vendor/photoswipe.css">
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <!-- Header with camera status and action buttons -->
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Header -->
     <header class="app-header">
         <div class="header-content">
-            <h1 class="app-title">Photo Sender</h1>
-            <div class="header-right">
-                <div class="camera-status">
-                    <span class="status-dot" id="cameraStatusDot"></span>
-                    <span class="status-text" id="cameraStatusText">Camera</span>
+            <div class="header-left">
+                <div class="connection-status" id="connectionStatus">
+                    <div class="status-indicator"></div>
                 </div>
+            </div>
+            
+            <div class="header-right">
                 <button class="btn btn-reset" id="resetBtn" type="button">Reset</button>
                 <button class="btn btn-send-header" id="sendBtnHeader" disabled type="button">
                     <span class="btn-text">Send</span>
@@ -42,9 +51,14 @@
 
                 <!-- Empty State -->
                 <div class="empty-state" id="emptyState">
-                    <div class="empty-icon">📷</div>
-                    <h3 class="empty-title">Waiting for photos...</h3>
-                    <p class="empty-text">Photos will appear here as you capture them</p>
+                    <div class="empty-icon">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                            <circle cx="12" cy="13" r="4"/>
+                        </svg>
+                    </div>
+                    <h3 class="empty-title">Ready for Photos</h3>
+                    <p class="empty-text">Photos will appear here instantly</p>
                 </div>
 
                 <!-- Photo Gallery Grid -->
@@ -92,16 +106,20 @@
             <!-- Sending State -->
             <div class="modal-content hidden" id="sendingState">
                 <div class="loading-spinner"></div>
-                <h3 class="modal-title">Sending photos...</h3>
+                <h3 class="modal-title">Sending...</h3>
                 <p class="modal-description" id="sendingProgress">0 of 0</p>
             </div>
 
             <!-- Success State -->
             <div class="modal-content hidden" id="successState">
-                <div class="success-icon">✓</div>
-                <h3 class="modal-title">Images sent!</h3>
+                <div class="success-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                </div>
+                <h3 class="modal-title">Sent!</h3>
                 <p class="modal-description" id="successMessage"></p>
-                <button class="btn btn-primary btn-large" id="closeSuccessBtn">Close</button>
+                <button class="btn btn-primary btn-large" id="closeSuccessBtn">Done</button>
             </div>
         </div>
     </div>
@@ -111,7 +129,7 @@
         <div class="modal-container modal-small">
             <div class="modal-content">
                 <h2 class="modal-title">Reset Session?</h2>
-                <p class="modal-description">This will clear the current gallery and start a new session. Photos will remain on disk.</p>
+                <p class="modal-description">This will clear the current gallery.</p>
 
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" id="confirmCancelBtn">Cancel</button>
@@ -126,8 +144,8 @@
 
     <!-- PhotoSwipe Core (ES Modules) -->
     <script type="module">
-        import PhotoSwipeLightbox from 'https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe-lightbox.esm.min.js';
-        import PhotoSwipe from 'https://cdn.jsdelivr.net/npm/photoswipe@5.4.4/dist/photoswipe.esm.min.js';
+        import PhotoSwipeLightbox from '/vendor/photoswipe-lightbox.esm.min.js';
+        import PhotoSwipe from '/vendor/photoswipe.esm.min.js';
 
         // Make available globally for app.js
         window.PhotoSwipeLightbox = PhotoSwipeLightbox;

@@ -3,28 +3,10 @@
 export interface Photo {
   filename: string;
   path: string;
-  selected: boolean;
-  timestamp: number;
+  // Selected state is now managed by frontend only
 }
 
-export interface Session {
-  id: string;
-  phone?: string;
-  timestamp: number;
-  photos: Photo[];
-  active: boolean;
-}
-
-export interface SessionMetadata {
-  phone?: string;
-  timestamp: number;
-  photos: Array<{
-    path: string;
-    selected: boolean;
-  }>;
-}
-
-// WebSocket event payloads
+// WebSocket event payloads (Server -> Client)
 export interface PhotoCapturedEvent {
   filename: string;
   path: string;
@@ -49,26 +31,12 @@ export interface SendCompleteEvent {
   error?: string;
 }
 
-// API request/response types
-export interface StartSessionResponse {
-  sessionId: string;
-}
+// WebSocket event payloads (Client -> Server)
+export type ClientRequestPhotosEvent = Record<string, never>;
 
-export interface SelectPhotoRequest {
-  selected: boolean;
-}
-
-export interface SendPhotosRequest {
+export interface ClientSendPhotosEvent {
   phone: string;
-  sessionId: string;
+  photos: string[]; // Array of filenames
 }
 
-export interface SendPhotosResponse {
-  success: boolean;
-  count: number;
-  error?: string;
-}
-
-export interface GetSessionResponse {
-  session: Session | null;
-}
+export type ClientResetSessionEvent = Record<string, never>;

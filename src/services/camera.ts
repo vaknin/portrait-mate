@@ -1,454 +1,470 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, access } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Server as SocketIOServer } from 'socket.io';
+import { EventEmitter } from 'node:events';
+import { config } from '../config.js';
+import { logger } from '../logger.js';
 
 // Connection states
-enum ConnectionState {
-    DISCONNECTED = 'DISCONNECTED',
-    CONNECTING = 'CONNECTING',
-    CONNECTED = 'CONNECTED',
-    ERROR = 'ERROR',
+export enum CameraConnectionState {
+  DISCONNECTED = 'DISCONNECTED',
+  CONNECTING = 'CONNECTING',
+  CONNECTED = 'CONNECTED',
+  ERROR = 'ERROR',
 }
 
-interface CameraServiceConfig {
-    io: SocketIOServer;
-    gphoto2Path?: string;
-    onPhotoCapture?: (filename: string, path: string) => void;
+export interface CameraServiceConfig {
+  gphoto2Path?: string;
 }
 
-export class CameraService {
-    private io: SocketIOServer;
-    private gphoto2Path: string;
-    private onPhotoCapture?: (filename: string, path: string) => void;
-    private monitorProcess: ChildProcess | null = null;
-    private reconnectTimer: NodeJS.Timeout | null = null;
-    private killTimer: NodeJS.Timeout | null = null;
-    private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
-    private isShuttingDown = false;
-    private isPaused = false;
-    private isChecking = false;
-    private readonly reconnectInterval: number = 3000; // Fixed 3 second interval
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+export declare interface CameraService {
+  on(
+    event: 'status',
+    listener: (status: { connected: boolean; state: CameraConnectionState }) => void,
+  ): this;
+  on(event: 'photo', listener: (data: { filename: string; path: string }) => void): this;
+  on(event: 'error', listener: (error: { message: string }) => void): this;
+}
 
-    constructor(config: CameraServiceConfig) {
-        this.io = config.io;
-        this.gphoto2Path = config.gphoto2Path || 'gphoto2';
-        this.onPhotoCapture = config.onPhotoCapture;
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+export class CameraService extends EventEmitter {
+  private gphoto2Path: string;
+  private monitorProcess: ChildProcess | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private killTimer: NodeJS.Timeout | null = null;
+  private connectionState: CameraConnectionState = CameraConnectionState.DISCONNECTED;
+  private isShuttingDown = false;
+  private isPaused = false;
+  private isChecking = false;
+  private readonly reconnectInterval: number = 3000; // Fixed 3 second interval
+  private lastLogTime: number = 0;
+  private readonly logThrottleInterval: number = 5 * 60 * 1000; // 5 minutes
+
+  constructor(cfg?: CameraServiceConfig) {
+    super();
+    this.gphoto2Path = cfg?.gphoto2Path || config.GPHOTO2_PATH;
+  }
+
+  /**
+   * Start monitoring the camera (called once on server startup)
+   */
+  async start(): Promise<void> {
+    // Create session directory
+    const sessionDir = config.PHOTOS_DIR;
+    await mkdir(sessionDir, { recursive: true });
+
+    // logger.info(`[Camera] Starting camera monitoring`); // Removed for less verbosity
+
+    // Start camera monitoring
+    await this.startCameraMonitor();
+  }
+
+  /**
+   * Stop all active timers (centralized cleanup)
+   */
+  private stopAllTimers(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.killTimer) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
+  }
+
+  /**
+   * Stop camera monitoring (called only on server shutdown)
+   */
+  async stop(): Promise<void> {
+    this.isShuttingDown = true;
+
+    // Stop all timers
+    this.stopAllTimers();
+
+    // Stop camera monitor process
+    if (this.monitorProcess) {
+      // Try SIGUSR2 for graceful shutdown, fallback to SIGTERM
+      this.monitorProcess.kill('SIGUSR2');
+
+      // Clear any existing kill timer
+      if (this.killTimer) {
+        clearTimeout(this.killTimer);
+      }
+
+      // If process doesn't exit in 5s, force kill
+      this.killTimer = setTimeout(() => {
+        if (this.monitorProcess && !this.monitorProcess.killed) {
+          logger.warn('[Camera] Process did not exit gracefully, forcing SIGTERM');
+          this.monitorProcess.kill('SIGTERM');
+        }
+        this.killTimer = null;
+      }, 5000);
+
+      this.monitorProcess = null;
     }
 
-    /**
-     * Start monitoring the camera (called once on server startup)
-     */
-    async start(): Promise<void> {
-        // Create session directory
-        const sessionDir = join(process.cwd(), 'session');
-        await mkdir(sessionDir, { recursive: true });
+    // Reset state
+    this.connectionState = CameraConnectionState.DISCONNECTED;
+    this.isShuttingDown = false;
 
-        console.log(`[Camera] Starting camera monitoring`);
+    // logger.info('[Camera] Camera monitoring stopped');
+  }
 
-        // Start camera monitoring
-        await this.startCameraMonitor();
+  /**
+   * Start the gphoto2 monitoring process using event-based approach
+   */
+  private async startCameraMonitor(): Promise<void> {
+    // Check if camera is available BEFORE setting state to CONNECTING
+    // This prevents the state flip-flop (DISCONNECTED -> CONNECTING -> DISCONNECTED)
+    // which causes repetitive logs during retry loops
+    const cameraAvailable = await this.checkCameraAvailable();
+
+    if (!cameraAvailable) {
+      // Only log if it's been a while or if it's the first time
+      const now = Date.now();
+      if (now - this.lastLogTime > this.logThrottleInterval) {
+        logger.info('[Camera] Camera not detected, waiting for connection...');
+        this.lastLogTime = now;
+      } else {
+        logger.debug('[Camera] Camera not detected, retrying...');
+      }
+
+      // Ensure we are in DISCONNECTED state (might already be)
+      if (this.connectionState !== CameraConnectionState.DISCONNECTED) {
+        this.setConnectionState(CameraConnectionState.DISCONNECTED);
+      }
+
+      this.scheduleReconnect();
+      return;
     }
 
-    /**
-     * Stop all active timers (centralized cleanup)
-     */
-    private stopAllTimers(): void {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        if (this.killTimer) {
-            clearTimeout(this.killTimer);
-            this.killTimer = null;
-        }
+    // Camera is available, NOW we can transition to CONNECTING
+    this.setConnectionState(CameraConnectionState.CONNECTING);
+
+    // Start event-based monitoring (includes capturetarget config)
+    await this.startEventMonitor();
+  }
+
+  /**
+   * Start event-based monitoring with gphoto2 --wait-event-and-download
+   */
+  private async startEventMonitor(): Promise<void> {
+    // Clean up any existing monitor process first
+    if (this.monitorProcess) {
+      logger.debug('[Camera] Cleaning up existing monitor process before restart...');
+
+      // Remove all event listeners to prevent ghost handlers
+      this.monitorProcess.removeAllListeners();
+
+      // Kill if still running
+      if (!this.monitorProcess.killed) {
+        this.monitorProcess.kill('SIGTERM');
+      }
+
+      this.monitorProcess = null;
     }
 
-    /**
-     * Stop camera monitoring (called only on server shutdown)
-     */
-    async stop(): Promise<void> {
-        console.log('[Camera] Stopping camera monitoring...');
-        this.isShuttingDown = true;
+    // Build filename pattern with session directory
+    const sessionDir = config.PHOTOS_DIR;
+    const filenamePattern = join(sessionDir, 'photo_%H%M%S.jpg');
 
-        // Stop all timers
-        this.stopAllTimers();
+    const args = [
+      '--set-config',
+      'capturetarget=1', // Save to SD card
+      '--set-config',
+      'imageformat=0', // Force JPEG only (not RAW+JPG)
+      '--capture-tethered', // Wait for shutter release and download
+      '--keep', // Keep files on SD after downloading
+      '--filename',
+      filenamePattern, // Download JPG to local session/ folder
+    ];
 
-        // Stop camera monitor process
-        if (this.monitorProcess) {
-            // Try SIGUSR2 for graceful shutdown, fallback to SIGTERM
-            this.monitorProcess.kill('SIGUSR2');
+    // logger.info(`[Camera] Starting event monitor`);
+    logger.debug(`[Camera] Command: ${this.gphoto2Path} ${args.join(' ')}`);
 
-            // Clear any existing kill timer
-            if (this.killTimer) {
-                clearTimeout(this.killTimer);
-            }
+    // Spawn long-running gphoto2 process
+    this.monitorProcess = spawn(this.gphoto2Path, args);
 
-            // If process doesn't exit in 5s, force kill
-            this.killTimer = setTimeout(() => {
-                if (this.monitorProcess && !this.monitorProcess.killed) {
-                    console.log('[Camera] Process did not exit gracefully, forcing SIGTERM');
-                    this.monitorProcess.kill('SIGTERM');
-                }
-                this.killTimer = null;
-            }, 5000);
+    // Monitor stdout for "Saving file as" events
+    this.monitorProcess.stdout?.on('data', (data: Buffer) => {
+      const output = data.toString();
+      const lines = output.split('\n');
 
-            this.monitorProcess = null;
+      for (const line of lines) {
+        if (line.includes('Saving file as')) {
+          this.parsePhotoEvent(line);
         }
+      }
+    });
 
-        // Reset state
-        this.connectionState = ConnectionState.DISCONNECTED;
-        this.isShuttingDown = false;
+    // Monitor stderr for errors
+    this.monitorProcess.stderr?.on('data', (data: Buffer) => {
+      const error = data.toString();
 
-        console.log('[Camera] Camera monitoring stopped');
+      // Log errors but don't spam console with normal gphoto2 debug output
+      if (error.includes('ERROR') || error.includes('WARNING')) {
+        logger.debug(`[Camera] stderr: ${error}`);
+      }
+
+      // Check for specific errors
+      if (error.toLowerCase().includes('no space left')) {
+        logger.error('[Camera] SD card full!');
+        this.emit('error', { message: 'SD card full' });
+      }
+    });
+
+    // Handle process exit (camera disconnected or error)
+    this.monitorProcess.on('close', (code) => {
+      logger.info(`[Camera] Monitor process exited with code ${code}`);
+
+      // Clear the process reference immediately
+      this.monitorProcess = null;
+
+      if (!this.isShuttingDown) {
+        logger.info('[Camera] Camera disconnected');
+        this.setConnectionState(CameraConnectionState.DISCONNECTED);
+        this.scheduleReconnect();
+      }
+    });
+
+    // Handle process errors
+    this.monitorProcess.on('error', (err) => {
+      logger.error(`[Camera] Monitor process error: ${err}`);
+
+      // Clear the process reference immediately
+      this.monitorProcess = null;
+
+      if (!this.isShuttingDown) {
+        this.setConnectionState(CameraConnectionState.ERROR);
+        this.scheduleReconnect();
+      }
+    });
+
+    // Successfully started
+    this.setConnectionState(CameraConnectionState.CONNECTED);
+    logger.info('[Camera] Connected');
+  }
+
+  /**
+   * Parse photo capture event from gphoto2 stdout
+   * Example: "Saving file as sessions/session_123/photo_143052.jpg"
+   */
+  private parsePhotoEvent(line: string): void {
+    // Check if camera is paused (during reset)
+    if (this.isPaused) {
+      logger.debug('[Camera] Photo capture paused, skipping event');
+      return;
     }
 
-    /**
-     * Start the gphoto2 monitoring process using event-based approach
-     */
-    private async startCameraMonitor(): Promise<void> {
-        // Update state to CONNECTING
-        this.setConnectionState(ConnectionState.CONNECTING);
+    // Extract filename from gphoto2 output
+    const match = line.match(/Saving file as (.+\.jpe?g)/i);
 
-        // Check if camera is available
-        const cameraAvailable = await this.checkCameraAvailable();
-        if (!cameraAvailable) {
-            console.log('[Camera] Camera not detected, will retry...');
-            this.setConnectionState(ConnectionState.DISCONNECTED);
-            this.scheduleReconnect();
-            return;
-        }
-
-        // Start event-based monitoring (includes capturetarget config)
-        await this.startEventMonitor();
+    if (!match || !match[1]) {
+      return;
     }
 
-    /**
-     * Start event-based monitoring with gphoto2 --wait-event-and-download
-     */
-    private async startEventMonitor(): Promise<void> {
-        // Clean up any existing monitor process first
-        if (this.monitorProcess) {
-            console.log('[Camera] Cleaning up existing monitor process before restart...');
+    const fullPath = match[1];
+    const filename = fullPath.split('/').pop() || '';
 
-            // Remove all event listeners to prevent ghost handlers
-            this.monitorProcess.removeAllListeners();
+    // Filter: only process JPG files (skip RAW if camera shoots RAW+JPG)
+    if (!/\.jpe?g$/i.test(filename)) {
+      logger.debug(`[Camera] Skipping non-JPG file: ${filename}`);
+      return;
+    }
 
-            // Kill if still running
-            if (!this.monitorProcess.killed) {
-                this.monitorProcess.kill('SIGTERM');
-            }
+    const photoPath = `/photos/${filename}`;
 
-            this.monitorProcess = null;
-        }
+    logger.info(`[Camera] Photo captured: ${filename}`);
 
-        // Build filename pattern with session directory
-        const sessionDir = join(process.cwd(), 'session');
-        const filenamePattern = join(sessionDir, 'photo_%H%M%S.jpg');
+    // Wait for file to be fully written before notifying
+    this.waitForFileAndNotify(fullPath, filename, photoPath);
+  }
 
-        const args = [
-            '--set-config', 'capturetarget=1',     // Save to SD card
-            '--set-config', 'imageformat=0',       // Force JPEG only (not RAW+JPG)
-            '--capture-tethered',                  // Wait for shutter release and download
-            '--keep',                              // Keep files on SD after downloading
-            '--filename', filenamePattern          // Download JPG to local session/ folder
-        ];
+  /**
+   * Wait for file to be fully written, then notify frontend
+   */
+  private async waitForFileAndNotify(
+    fullPath: string,
+    filename: string,
+    photoPath: string,
+  ): Promise<void> {
+    const maxRetries = 10;
+    const retryDelay = 100; // ms
 
-        console.log(`[Camera] Starting event monitor: ${this.gphoto2Path} ${args.join(' ')}`);
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await access(fullPath);
+        // File exists and is accessible
 
-        // Spawn long-running gphoto2 process
-        this.monitorProcess = spawn(this.gphoto2Path, args);
-
-        // Monitor stdout for "Saving file as" events
-        this.monitorProcess.stdout?.on('data', (data: Buffer) => {
-            const output = data.toString();
-            const lines = output.split('\n');
-
-            for (const line of lines) {
-                if (line.includes('Saving file as')) {
-                    this.parsePhotoEvent(line);
-                }
-            }
+        // Emit event
+        this.emit('photo', {
+          filename,
+          path: photoPath,
         });
 
-        // Monitor stderr for errors
-        this.monitorProcess.stderr?.on('data', (data: Buffer) => {
-            const error = data.toString();
-
-            // Log errors but don't spam console with normal gphoto2 debug output
-            if (error.includes('ERROR') || error.includes('WARNING')) {
-                console.error('[Camera] stderr:', error);
-            }
-
-            // Check for specific errors
-            if (error.toLowerCase().includes('no space left')) {
-                console.error('[Camera] ❌ SD card full!');
-                this.io.emit('camera-error', { error: 'SD card full' });
-            }
-        });
-
-        // Handle process exit (camera disconnected or error)
-        this.monitorProcess.on('close', (code) => {
-            console.log(`[Camera] Monitor process exited with code ${code}`);
-
-            // Clear the process reference immediately
-            this.monitorProcess = null;
-
-            if (!this.isShuttingDown) {
-                console.log('[Camera] Camera disconnected or process crashed, scheduling reconnect');
-                this.setConnectionState(ConnectionState.DISCONNECTED);
-                this.scheduleReconnect();
-            }
-        });
-
-        // Handle process errors
-        this.monitorProcess.on('error', (err) => {
-            console.error('[Camera] Monitor process error:', err);
-
-            // Clear the process reference immediately
-            this.monitorProcess = null;
-
-            if (!this.isShuttingDown) {
-                this.setConnectionState(ConnectionState.ERROR);
-                this.scheduleReconnect();
-            }
-        });
-
-        // Successfully started
-        this.setConnectionState(ConnectionState.CONNECTED);
-        console.log('[Camera] ✅ Event monitor started successfully');
+        return;
+      } catch {
+        // File not ready yet, wait and retry
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
     }
 
-    /**
-     * Parse photo capture event from gphoto2 stdout
-     * Example: "Saving file as sessions/session_123/photo_143052.jpg"
-     */
-    private parsePhotoEvent(line: string): void {
-        // Check if camera is paused (during reset)
-        if (this.isPaused) {
-            console.log('[Camera] Photo capture paused, skipping event');
-            return;
-        }
+    logger.error(`[Camera] Timeout waiting for file: ${fullPath}`);
 
-        // Extract filename from gphoto2 output
-        const match = line.match(/Saving file as (.+\.jpe?g)/i);
+    // Emit error
+    this.emit('error', {
+      message: `Photo file not ready: ${filename}`,
+    });
+  }
 
-        if (!match) {
-            return;
-        }
-
-        const fullPath = match[1];
-        const filename = fullPath.split('/').pop() || '';
-
-        // Filter: only process JPG files (skip RAW if camera shoots RAW+JPG)
-        if (!/\.jpe?g$/i.test(filename)) {
-            console.log(`[Camera] Skipping non-JPG file: ${filename}`);
-            return;
-        }
-
-        const photoPath = `/photos/${filename}`;
-
-        console.log(`[Camera] 📷 Photo captured: ${filename}`);
-
-        // Wait for file to be fully written before notifying
-        this.waitForFileAndNotify(fullPath, filename, photoPath);
+  /**
+   * Check if camera is available by performing actual operation
+   * Uses --summary which requires camera to be accessible
+   */
+  private async checkCameraAvailable(): Promise<boolean> {
+    // Prevent concurrent checks (gphoto2 uses exclusive locks)
+    if (this.isChecking) {
+      logger.debug('[Camera] Detection already in progress, skipping');
+      return false;
     }
 
-    /**
-     * Wait for file to be fully written, then notify frontend
-     */
-    private async waitForFileAndNotify(fullPath: string, filename: string, photoPath: string): Promise<void> {
-        const maxRetries = 10;
-        const retryDelay = 100; // ms
+    this.isChecking = true;
 
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                await access(fullPath);
-                // File exists and is accessible
+    try {
+      return await new Promise((resolve) => {
+        // Use --summary instead of --auto-detect for more reliable check
+        const detect = spawn(this.gphoto2Path, ['--summary']);
 
-                // Call callback (adds to session array in server.ts)
-                if (this.onPhotoCapture) {
-                    this.onPhotoCapture(filename, photoPath);
-                }
+        let output = '';
+        let errorOutput = '';
+        let resolved = false;
 
-                // Emit Socket.io event (notifies frontend)
-                this.io.emit('photo-captured', {
-                    filename,
-                    path: photoPath,
-                });
-
-                return;
-            } catch {
-                // File not ready yet, wait and retry
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-            }
-        }
-
-        console.error(`[Camera] Timeout waiting for file: ${fullPath}`);
-
-        // Emit error to frontend
-        this.io.emit('camera-error', {
-            error: 'Photo file not ready',
-            filename
-        });
-    }
-
-    /**
-     * Handle camera errors (simplified for event-based monitoring)
-     */
-    private async handleCameraError(error: unknown): Promise<void> {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error('[Camera] Error occurred:', errorMsg);
-
-        // Check if camera is still available
-        const stillConnected = await this.checkCameraAvailable();
-        if (!stillConnected) {
-            console.log('[Camera] Camera disconnected, scheduling reconnection');
-            this.setConnectionState(ConnectionState.DISCONNECTED);
-            this.scheduleReconnect();
-        } else {
-            // Temporary error - log and continue
-            console.log('[Camera] Temporary error, camera still connected');
-        }
-    }
-
-    /**
-     * Check if camera is available by performing actual operation
-     * Uses --summary which requires camera to be accessible
-     */
-    private async checkCameraAvailable(): Promise<boolean> {
-        // Prevent concurrent checks (gphoto2 uses exclusive locks)
-        if (this.isChecking) {
-            console.log('[Camera] Detection already in progress, skipping');
-            return false;
-        }
-
-        this.isChecking = true;
-
-        try {
-            return await new Promise((resolve) => {
-                // Use --summary instead of --auto-detect for more reliable check
-                const detect = spawn(this.gphoto2Path, ['--summary']);
-
-                let output = '';
-                let errorOutput = '';
-                let resolved = false;
-
-                // Handle timeout
-                const timeout = setTimeout(() => {
-                    if (!resolved && !detect.killed) {
-                        resolved = true;
-                        detect.kill();
-                        console.log('[Camera] Detection timed out');
-                        this.isChecking = false;
-                        resolve(false);
-                    }
-                }, 5000);
-
-                detect.stdout?.on('data', (data: Buffer) => {
-                    output += data.toString();
-                });
-
-                detect.stderr?.on('data', (data: Buffer) => {
-                    errorOutput += data.toString();
-                });
-
-                detect.on('close', (code) => {
-                    if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timeout);
-                        this.isChecking = false;
-
-                        // Check if command succeeded and returned camera info
-                        const hasCamera = code === 0 && output.length > 0;
-
-                        if (hasCamera) {
-                            console.log('[Camera] ✅ Camera detected and accessible');
-                        } else {
-                            console.log('[Camera] ❌ Camera not detected or not accessible');
-                            if (errorOutput) {
-                                console.log(`[Camera] Error: ${errorOutput.substring(0, 200)}`);
-                            }
-                        }
-
-                        resolve(hasCamera);
-                    }
-                });
-
-                detect.on('error', (err) => {
-                    if (!resolved) {
-                        resolved = true;
-                        clearTimeout(timeout);
-                        this.isChecking = false;
-                        console.error('[Camera] Detection error:', err);
-                        resolve(false);
-                    }
-                });
-            });
-        } finally {
+        // Handle timeout
+        const timeout = setTimeout(() => {
+          if (!resolved && !detect.killed) {
+            resolved = true;
+            detect.kill();
+            logger.debug('[Camera] Detection timed out');
             this.isChecking = false;
-        }
-    }
+            resolve(false);
+          }
+        }, 5000);
 
-    /**
-     * Schedule a reconnection attempt with fixed interval
-     */
-    private scheduleReconnect(): void {
-        // Stop all timers first to prevent duplicates
-        this.stopAllTimers();
+        detect.stdout?.on('data', (data: Buffer) => {
+          output += data.toString();
+        });
 
-        console.log(`[Camera] Will retry connection in ${this.reconnectInterval / 1000}s`);
+        detect.stderr?.on('data', (data: Buffer) => {
+          errorOutput += data.toString();
+        });
 
-        this.reconnectTimer = setTimeout(async () => {
-            if (this.isShuttingDown) {
-                return;
+        detect.on('close', (code) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            this.isChecking = false;
+
+            // Check if command succeeded and returned camera info
+            const hasCamera = code === 0 && output.length > 0;
+
+            if (hasCamera) {
+              logger.debug('[Camera] Camera detected and accessible');
+            } else {
+              logger.debug('[Camera] Camera not detected or not accessible');
+              if (errorOutput) {
+                logger.debug(`[Camera] Error: ${errorOutput.substring(0, 200)}`);
+              }
             }
 
-            console.log('[Camera] Attempting to reconnect...');
-            await this.startCameraMonitor();
-        }, this.reconnectInterval);
-    }
+            resolve(hasCamera);
+          }
+        });
 
-    /**
-     * Update connection state and emit to clients
-     */
-    private setConnectionState(state: ConnectionState): void {
-        if (this.connectionState !== state) {
-            const oldState = this.connectionState;
-            this.connectionState = state;
-            console.log(`[Camera] State: ${oldState} → ${state}`);
-
-            // Emit to clients
-            this.io.emit('camera-status', {
-                connected: state === ConnectionState.CONNECTED,
-                state: state,
-            });
-        }
+        detect.on('error', (err) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            this.isChecking = false;
+            logger.debug(`[Camera] Detection error: ${err}`);
+            resolve(false);
+          }
+        });
+      });
+    } finally {
+      this.isChecking = false;
     }
+  }
 
-    /**
-     * Get current connection status
-     */
-    public getStatus(): { connected: boolean; state: string } {
-        return {
-            connected: this.connectionState === ConnectionState.CONNECTED,
-            state: this.connectionState,
-        };
-    }
+  /**
+   * Schedule a reconnection attempt with fixed interval
+   */
+  private scheduleReconnect(): void {
+    // Stop all timers first to prevent duplicates
+    this.stopAllTimers();
 
-    /**
-     * Pause photo capture events (used during session reset)
-     */
-    public pause(): void {
-        this.isPaused = true;
-        console.log('[Camera] Photo capture paused');
-    }
+    // Only log if we are debugging, otherwise keep it silent
+    logger.debug(`[Camera] Will retry connection in ${this.reconnectInterval / 1000}s`);
 
-    /**
-     * Resume photo capture events
-     */
-    public resume(): void {
-        this.isPaused = false;
-        console.log('[Camera] Photo capture resumed');
+    this.reconnectTimer = setTimeout(async () => {
+      if (this.isShuttingDown) {
+        return;
+      }
+
+      // Only log "Attempting to reconnect" if it's been a while
+      const now = Date.now();
+      if (now - this.lastLogTime > this.logThrottleInterval) {
+        logger.info('[Camera] Attempting to reconnect...');
+        this.lastLogTime = now;
+      } else {
+        logger.debug('[Camera] Attempting to reconnect...');
+      }
+
+      await this.startCameraMonitor();
+    }, this.reconnectInterval);
+  }
+
+  /**
+   * Update connection state and emit to clients
+   */
+  private setConnectionState(state: CameraConnectionState): void {
+    if (this.connectionState !== state) {
+      const oldState = this.connectionState;
+      this.connectionState = state;
+      // logger.info(`[Camera] State: ${oldState} → ${state}`);
+
+      // Emit status change
+      this.emit('status', {
+        connected: state === CameraConnectionState.CONNECTED,
+        state: state,
+      });
     }
+  }
+
+  /**
+   * Get current connection status
+   */
+  public getStatus(): { connected: boolean; state: string } {
+    return {
+      connected: this.connectionState === CameraConnectionState.CONNECTED,
+      state: this.connectionState,
+    };
+  }
+
+  /**
+   * Pause photo capture events (used during session reset)
+   */
+  public pause(): void {
+    this.isPaused = true;
+    logger.info('[Camera] Photo capture paused');
+  }
+
+  /**
+   * Resume photo capture events
+   */
+  public resume(): void {
+    this.isPaused = false;
+    logger.info('[Camera] Photo capture resumed');
+  }
 }

@@ -1,16 +1,16 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
-  WASocket,
+  type WASocket,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { Server as SocketIOServer } from 'socket.io';
-import { readFile } from 'fs/promises';
-import type { SendProgressEvent, WhatsAppStatusEvent } from '../types/index.ts';
+import { readFile, rm } from 'fs/promises';
+import type { SendProgressEvent, WhatsAppStatusEvent } from '../types/index.js';
+import { logger } from '../logger.js';
 
 interface WhatsAppServiceConfig {
   io: SocketIOServer;
@@ -35,7 +35,7 @@ export class WhatsAppService {
    * Initialize WhatsApp connection
    */
   async start(): Promise<void> {
-    console.log('[WhatsApp] Starting WhatsApp service...');
+    logger.debug('[WhatsApp] Starting WhatsApp service...');
     await this.connectToWhatsApp();
   }
 
@@ -43,27 +43,27 @@ export class WhatsAppService {
    * Stop WhatsApp connection gracefully
    */
   async stop(): Promise<void> {
-    console.log('[WhatsApp] Stopping WhatsApp service...');
+    // logger.info('[WhatsApp] Stopping WhatsApp service...');
     this.shouldReconnect = false;
 
     if (this.sock) {
       try {
         // Only attempt logout if we're still connected
-        if (this.isConnected && this.sock.ws?.readyState === 1) {
-          await this.sock.logout();
-          console.log('[WhatsApp] Logged out successfully');
+        if (this.isConnected && this.sock.ws) {
+          // Do NOT logout, just close the connection to preserve session
+          this.sock.ws.close();
+          // logger.info('[WhatsApp] Connection closed (session preserved)');
         } else {
           // Just close the socket without logout if already disconnected
           if (this.sock.ws) {
             this.sock.ws.close();
           }
-          console.log('[WhatsApp] Connection closed');
         }
       } catch (error) {
         // Silently ignore connection errors during shutdown
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (!errorMessage.includes('Connection Closed')) {
-          console.error('[WhatsApp] Error during logout:', error);
+          logger.error(`[WhatsApp] Error during logout: ${error}`);
         }
       }
       this.sock = null;
@@ -85,49 +85,47 @@ export class WhatsAppService {
    */
   async sendPhotos(jid: string, photoPaths: string[]): Promise<boolean> {
     if (!this.sock || !this.isConnected) {
-      console.error('[WhatsApp] Cannot send photos: not connected');
+      logger.error('[WhatsApp] Cannot send photos: not connected');
       return false;
     }
 
     if (photoPaths.length === 0) {
-      console.error('[WhatsApp] No photos to send');
+      logger.error('[WhatsApp] No photos to send');
       return false;
     }
 
     const SEND_TIMEOUT = 30000; // 30 seconds per photo
 
-    console.log(`[WhatsApp] Sending ${photoPaths.length} photos to ${jid}...`);
+    logger.info(`[WhatsApp] Sending ${photoPaths.length} photos to ${jid}...`);
 
     try {
       for (let i = 0; i < photoPaths.length; i++) {
         const photoPath = photoPaths[i];
-        console.log(`[WhatsApp] Sending photo ${i + 1}/${photoPaths.length}: ${photoPath}`);
+        logger.info(`[WhatsApp] Sending photo ${i + 1}/${photoPaths.length}: ${photoPath}`);
 
         try {
           // Read photo file asynchronously
+          if (!photoPath) continue;
           const imageBuffer = await readFile(photoPath);
 
           // Suppress verbose Baileys/libsignal crypto logs during send
-          const originalConsoleLog = console.log;
-          console.log = () => {};
+          // We can't easily suppress console.log globally in a safe way with Pino,
+          // but Baileys uses a logger we passed in, so it should be quiet.
+          // However, some libs might still use console.log.
+          // For now, we just proceed.
 
-          try {
-            // Send photo via WhatsApp with timeout
-            await Promise.race([
-              this.sock.sendMessage(jid, {
-                image: imageBuffer,
-                mimetype: 'image/jpeg',
-              }),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Send timeout')), SEND_TIMEOUT)
-              ),
-            ]);
-          } finally {
-            // Restore console.log
-            console.log = originalConsoleLog;
-          }
+          // Send photo via WhatsApp with timeout
+          await Promise.race([
+            this.sock.sendMessage(jid, {
+              image: imageBuffer,
+              mimetype: 'image/jpeg',
+            }),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Send timeout')), SEND_TIMEOUT),
+            ),
+          ]);
 
-          console.log(`[WhatsApp] Photo ${i + 1}/${photoPaths.length} sent successfully`);
+          logger.info(`[WhatsApp] Photo ${i + 1}/${photoPaths.length} sent successfully`);
 
           // Emit progress event
           this.emitProgress(i + 1, photoPaths.length);
@@ -137,15 +135,15 @@ export class WhatsAppService {
             await this.delay(500);
           }
         } catch (error) {
-          console.error(`[WhatsApp] Error sending photo ${i + 1}:`, error);
+          logger.error(`[WhatsApp] Error sending photo ${i + 1}: ${error}`);
           throw error;
         }
       }
 
-      console.log(`[WhatsApp] All ${photoPaths.length} photos sent successfully`);
+      logger.info(`[WhatsApp] All ${photoPaths.length} photos sent successfully`);
       return true;
     } catch (error) {
-      console.error('[WhatsApp] Failed to send photos:', error);
+      logger.error(`[WhatsApp] Failed to send photos: ${error}`);
       return false;
     }
   }
@@ -154,37 +152,32 @@ export class WhatsAppService {
    * Connect to WhatsApp using Baileys
    */
   private async connectToWhatsApp(): Promise<void> {
+    if (!this.shouldReconnect) return;
+
     try {
-      console.log('[WhatsApp] Loading auth state...');
+      logger.debug('[WhatsApp] Loading auth state...');
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
-      console.log('[WhatsApp] Fetching latest Baileys version...');
+      logger.debug('[WhatsApp] Fetching latest Baileys version...');
       const { version, isLatest } = await fetchLatestBaileysVersion();
-      console.log(`[WhatsApp] Using Baileys version ${version.join('.')}, isLatest: ${isLatest}`);
+      logger.debug(`[WhatsApp] Using Baileys version ${version.join('.')}, isLatest: ${isLatest}`);
 
-      console.log('[WhatsApp] Creating WhatsApp socket...');
+      logger.debug('[WhatsApp] Creating WhatsApp socket...');
 
       // Custom logger to suppress verbose Baileys internal logs
-      const baileysLogger = {
-        level: 'silent', // Suppress all logs
-        trace: () => {},
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-        fatal: () => {},
-        child: () => baileysLogger,
-      };
+      const baileysLogger = logger.child({ module: 'baileys' });
+      baileysLogger.level = 'silent';
 
       this.sock = makeWASocket({
         version,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         logger: baileysLogger as any, // Suppress Baileys internal logs
         auth: {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
         printQRInTerminal: false, // We'll handle QR display manually
-        browser: Browsers.ubuntu('Chrome'), // Masquerade as Chrome on Ubuntu
+        browser: ['Photo Sender', 'Linux', '1.0.0'], // Custom browser name to prevent conflicts
         defaultQueryTimeoutMs: 60000,
       });
 
@@ -198,16 +191,23 @@ export class WhatsAppService {
         // Display QR code if present
         if (qr) {
           this.qrAttempts++;
+          logger.info(`[WhatsApp] QR Code received (Attempt ${this.qrAttempts}/${this.maxQRAttempts})`);
+
+          // Emit QR code to frontend
+          this.io.emit('whatsapp-qr', { qr, attempt: this.qrAttempts });
+
+          // Also display in terminal for headless use
           console.log('\n[WhatsApp] QR Code for authentication:');
           console.log('═'.repeat(50));
           qrcode.generate(qr, { small: true });
           console.log('═'.repeat(50));
-          console.log('[WhatsApp] Scan this QR code with your phone\'s WhatsApp');
-          console.log(`[WhatsApp] Attempt ${this.qrAttempts}/${this.maxQRAttempts}`);
+          console.log("[WhatsApp] Scan this QR code with your phone's WhatsApp");
 
           if (this.qrAttempts >= this.maxQRAttempts) {
-            console.error('[WhatsApp] Max QR attempts reached. Restarting connection...');
+            logger.error('[WhatsApp] Max QR attempts reached. Restarting connection...');
             this.qrAttempts = 0;
+            // Close current connection before retrying
+            this.sock?.ws?.close();
             setTimeout(() => this.connectToWhatsApp(), 3000);
           }
         }
@@ -222,16 +222,32 @@ export class WhatsAppService {
 
           // Log reason for disconnection
           if (statusCode === DisconnectReason.loggedOut) {
-            console.log('[WhatsApp] Logged out - session invalidated');
+            logger.info('[WhatsApp] Logged out - session invalidated');
+            logger.info('[WhatsApp] Clearing auth data and restarting...');
+
+            // Clear auth directory
+            try {
+              await rm(this.authDir, { recursive: true, force: true });
+              logger.debug('[WhatsApp] Auth directory cleared');
+            } catch (err) {
+              logger.error(`[WhatsApp] Error clearing auth dir: ${err}`);
+            }
+
+            // Force reconnect
+            this.shouldReconnect = true;
+            setTimeout(() => this.connectToWhatsApp(), 1000);
           } else if (statusCode === DisconnectReason.connectionReplaced) {
-            console.log('[WhatsApp] ⚠️  Connection replaced - another WhatsApp Web session is active');
-            console.log('[WhatsApp] Close other sessions or enable Multi-Device');
-          } else if (statusCode === 428) { // connectionClosed
-            console.log('[WhatsApp] Connection closed by server');
+            logger.warn(
+              '[WhatsApp] Connection replaced - another WhatsApp Web session is active',
+            );
+            logger.warn('[WhatsApp] Close other sessions or enable Multi-Device');
+          } else if (statusCode === 428) {
+            // connectionClosed
+            logger.debug('[WhatsApp] Connection closed by server');
           } else if (statusCode) {
-            console.log(`[WhatsApp] Disconnected (${statusCode})`);
+            logger.info(`[WhatsApp] Disconnected (${statusCode})`);
           } else {
-            console.log('[WhatsApp] Connection closed');
+            logger.info('[WhatsApp] Connection closed');
           }
 
           if (shouldReconnect && this.shouldReconnect) {
@@ -241,23 +257,23 @@ export class WhatsAppService {
         } else if (connection === 'open') {
           this.isConnected = true;
           this.qrAttempts = 0; // Reset QR attempts on successful connection
-          console.log('[WhatsApp] Connection opened successfully');
+          logger.info('[WhatsApp] Connection opened successfully');
           this.emitStatus(true);
         } else if (connection === 'connecting') {
-          console.log('[WhatsApp] Connecting...');
+          logger.debug('[WhatsApp] Connecting...');
         }
       });
 
       // Handle messages upsert (optional - for receiving messages)
-      this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      this.sock.ev.on('messages.upsert', async ({ messages: _messages, type: _type }) => {
         // We don't need to handle incoming messages for this use case
         // Silently ignore incoming messages
       });
     } catch (error) {
-      console.error('[WhatsApp] Error connecting to WhatsApp:', error);
+      logger.error(`[WhatsApp] Error connecting to WhatsApp: ${error}`);
 
       if (this.shouldReconnect) {
-        console.log('[WhatsApp] Retrying connection in 5 seconds...');
+        logger.info('[WhatsApp] Retrying connection in 5 seconds...');
         setTimeout(() => this.connectToWhatsApp(), 5000);
       }
     }
@@ -269,7 +285,7 @@ export class WhatsAppService {
   private emitStatus(connected: boolean): void {
     const event: WhatsAppStatusEvent = { connected };
     this.io.emit('whatsapp-status', event);
-    console.log(`[WhatsApp] Status emitted: ${connected ? 'connected' : 'disconnected'}`);
+    logger.debug(`[WhatsApp] Status emitted: ${connected ? 'connected' : 'disconnected'}`);
   }
 
   /**
@@ -278,7 +294,7 @@ export class WhatsAppService {
   private emitProgress(current: number, total: number): void {
     const event: SendProgressEvent = { current, total };
     this.io.emit('send-progress', event);
-    console.log(`[WhatsApp] Progress: ${current}/${total}`);
+    logger.info(`[WhatsApp] Progress: ${current}/${total}`);
   }
 
   /**
