@@ -79,37 +79,35 @@ export class CameraService extends EventEmitter {
    */
   async stop(): Promise<void> {
     this.isShuttingDown = true;
-
-    // Stop all timers
     this.stopAllTimers();
-
-    // Stop camera monitor process
     if (this.monitorProcess) {
-      // Try SIGUSR2 for graceful shutdown, fallback to SIGTERM
       this.monitorProcess.kill('SIGUSR2');
 
-      // Clear any existing kill timer
-      if (this.killTimer) {
-        clearTimeout(this.killTimer);
-      }
+      // Wait for process to exit
+      try {
+        await new Promise<void>((resolve, reject) => {
+          if (!this.monitorProcess) return resolve();
 
-      // If process doesn't exit in 5s, force kill
-      this.killTimer = setTimeout(() => {
-        if (this.monitorProcess && !this.monitorProcess.killed) {
-          logger.warn('[Camera] Process did not exit gracefully, forcing SIGTERM');
-          this.monitorProcess.kill('SIGTERM');
-        }
-        this.killTimer = null;
-      }, 5000);
+          const timeout = setTimeout(() => {
+            if (this.monitorProcess) {
+              this.monitorProcess.kill('SIGTERM');
+              resolve();
+            }
+          }, 5000);
+
+          this.monitorProcess.on('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+      } catch (e) {
+        logger.error('Error stopping monitor process', e);
+      }
 
       this.monitorProcess = null;
     }
-
-    // Reset state
     this.connectionState = CameraConnectionState.DISCONNECTED;
-    this.isShuttingDown = false;
-
-    // logger.info('[Camera] Camera monitoring stopped');
+    this.emit('status', { connected: false, state: CameraConnectionState.DISCONNECTED });
   }
 
   /**

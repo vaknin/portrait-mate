@@ -202,6 +202,9 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 4. Trigger Remote Capture
+  // 4. Trigger Remote Capture (Removed)
+
   socket.on('disconnect', () => {
     logger.debug(`[WebSocket] Client disconnected: ${socket.id}`);
   });

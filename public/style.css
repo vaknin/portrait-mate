@@ -844,12 +844,6 @@ body {
 }
 
 
-@keyframes toastFadeOut {
-    to {
-        opacity: 0;
-        transform: translateY(-10px);
-    }
-}
 
 .toast-icon {
     flex-shrink: 0;

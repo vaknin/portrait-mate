@@ -5,7 +5,8 @@ const state = {
     socket: null,
     lightbox: null,
     photos: [], // [{filename, path, selected, width, height}]
-    cameraConnected: false
+    cameraConnected: false,
+    whatsappConnected: false
 };
 
 // ================================
@@ -155,7 +156,7 @@ function initSocket() {
     state.socket.on('connect', () => {
         console.log('Connected to server');
         updateConnectionStatus(true);
-        ToastSystem.show('Connected to server', 'success');
+        // ToastSystem.show('Connected to server', 'success'); // Removed per feedback
         state.socket.emit('client:request-photos');
     });
 
@@ -200,15 +201,20 @@ function initSocket() {
         }
     });
 
+
+
     state.socket.on('whatsapp-qr', (data) => {
         console.log('QR Code received', data);
         showQRModal(data.qr, data.attempt);
     });
 
     state.socket.on('whatsapp-status', (data) => {
+        state.whatsappConnected = data.connected;
+        updateSendButton(); // Re-evaluate send button
+
         if (data.connected) {
             closeQRModal();
-            ToastSystem.show('WhatsApp Connected!', 'success');
+            // ToastSystem.show('WhatsApp Connected!', 'success'); // Removed per feedback
         }
     });
 }
@@ -513,7 +519,15 @@ function updateSelectionCount() {
 
 function updateSendButton() {
     const hasSelection = state.photos.some(p => p.selected);
-    elements.sendBtn.disabled = !hasSelection;
+    // Enable only if photos selected AND WhatsApp connected
+    elements.sendBtn.disabled = !hasSelection || !state.whatsappConnected;
+
+    // Optional: Add visual cue if disabled due to WhatsApp
+    if (hasSelection && !state.whatsappConnected) {
+        elements.sendBtn.title = "WhatsApp not connected";
+    } else {
+        elements.sendBtn.title = "";
+    }
 }
 
 function updateBottomBar() {
@@ -619,6 +633,8 @@ elements.resetBtn.addEventListener('click', showConfirmModal);
 elements.confirmCancelBtn.addEventListener('click', closeConfirmModal);
 elements.confirmResetBtn.addEventListener('click', resetSession);
 elements.qrCancelBtn.addEventListener('click', closeQRModal);
+
+
 
 elements.sendBtn.addEventListener('click', () => {
     if (!elements.sendBtn.disabled) showPhoneModal();
