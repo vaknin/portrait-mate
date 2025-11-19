@@ -188,7 +188,7 @@ export class WhatsAppService {
           keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
         printQRInTerminal: false, // We'll handle QR display manually
-        browser: ['Photo Sender', 'Linux', '1.0.0'], // Custom browser name to prevent conflicts
+        browser: ['portrait-mate', 'Linux', '1.0.0'], // Custom browser name to prevent conflicts
         defaultQueryTimeoutMs: 60000,
       });
 

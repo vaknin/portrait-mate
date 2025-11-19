@@ -44,7 +44,7 @@ Street/portrait photography workflow for shooting strangers and instantly sendin
 ## Project Structure
 
 ```
-photo-taker-sender/
+portrait-mate/
 ├── src/
 │   ├── server.ts           # Main Express server
 │   ├── services/
@@ -170,7 +170,7 @@ photo-taker-sender/
 
 ### Phase 6: Production Build (Single Binary)
 - [ ] Test full workflow end-to-end (camera → capture → select → send)
-- [ ] Compile to single binary with `bun build --compile src/server.ts --outfile photo-sender`
+- [ ] Compile to single binary with `bun build --compile src/server.ts --outfile portrait-mate`
 - [ ] Test binary on laptop (no node_modules needed)
 - [ ] Create startup script for production use
 - [ ] Document deployment to laptop in backpack

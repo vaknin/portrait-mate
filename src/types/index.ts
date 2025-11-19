@@ -1,4 +1,4 @@
-// Type definitions for the photo-taker-sender application
+// Type definitions for the portrait-mate application
 
 export interface Photo {
   filename: string;

@@ -541,7 +541,7 @@ elements.closeSuccessBtn.addEventListener('click', closePhoneModal);
 // App Initialization
 // ================================
 function init() {
-    console.log('Initializing Photo Sender app...');
+    console.log('Initializing portrait-mate app...');
     initSocket();
     initPhotoSwipe();
     console.log('App initialized');

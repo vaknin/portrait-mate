@@ -1,5 +1,5 @@
 {
-  "name": "photo-taker-sender",
+  "name": "portrait-mate",
   "version": "1.0.0",
   "description": "Street/portrait photography workflow for shooting strangers and instantly sending them their photos via WhatsApp",
   "module": "src/server.ts",
@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "start": "bun src/server.ts",
-    "compile": "bun build --compile src/server.ts --outfile photo-sender",
+    "compile": "bun build --compile src/server.ts --outfile portrait-mate",
     "lint": "ESLINT_USE_FLAT_CONFIG=false eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.{ts,js,json}\""
   },
