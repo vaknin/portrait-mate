@@ -139,6 +139,27 @@
         </div>
     </div>
 
+    <!-- QR Code Modal -->
+    <div class="modal-overlay" id="qrModal">
+        <div class="modal-container modal-small">
+            <div class="modal-content">
+                <h2 class="modal-title">WhatsApp Login</h2>
+                <p class="modal-description">Scan with your phone to connect</p>
+                
+                <div class="qr-container" id="qrContainer">
+                    <!-- QR Code will be injected here -->
+                    <div class="qr-placeholder"></div>
+                </div>
+
+                <p class="qr-status" id="qrStatus">Waiting for QR code...</p>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="qrCancelBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Socket.io Client -->
     <script src="/socket.io/socket.io.js"></script>
 

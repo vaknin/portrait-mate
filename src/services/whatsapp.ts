@@ -25,6 +25,7 @@ export class WhatsAppService {
   private shouldReconnect: boolean = true;
   private qrAttempts: number = 0;
   private maxQRAttempts: number = 5;
+  private latestQR: string | null = null; // Store latest QR for late-joining clients
 
   constructor(config: WhatsAppServiceConfig) {
     this.io = config.io;
@@ -78,6 +79,16 @@ export class WhatsAppService {
    */
   getStatus(): { connected: boolean } {
     return { connected: this.isConnected };
+  }
+
+  /**
+   * Get latest QR code (for late-joining clients)
+   */
+  getLatestQR(): { qr: string; attempt: number } | null {
+    if (this.latestQR) {
+      return { qr: this.latestQR, attempt: this.qrAttempts };
+    }
+    return null;
   }
 
   /**
@@ -191,17 +202,11 @@ export class WhatsAppService {
         // Display QR code if present
         if (qr) {
           this.qrAttempts++;
+          this.latestQR = qr; // Store for late-joining clients
           logger.info(`[WhatsApp] QR Code received (Attempt ${this.qrAttempts}/${this.maxQRAttempts})`);
 
           // Emit QR code to frontend
           this.io.emit('whatsapp-qr', { qr, attempt: this.qrAttempts });
-
-          // Also display in terminal for headless use
-          console.log('\n[WhatsApp] QR Code for authentication:');
-          console.log('═'.repeat(50));
-          qrcode.generate(qr, { small: true });
-          console.log('═'.repeat(50));
-          console.log("[WhatsApp] Scan this QR code with your phone's WhatsApp");
 
           if (this.qrAttempts >= this.maxQRAttempts) {
             logger.error('[WhatsApp] Max QR attempts reached. Restarting connection...');
@@ -257,6 +262,7 @@ export class WhatsAppService {
         } else if (connection === 'open') {
           this.isConnected = true;
           this.qrAttempts = 0; // Reset QR attempts on successful connection
+          this.latestQR = null; // Clear QR code on successful connection
           logger.info('[WhatsApp] Connection opened successfully');
           this.emitStatus(true);
         } else if (connection === 'connecting') {

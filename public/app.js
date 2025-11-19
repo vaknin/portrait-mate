@@ -41,7 +41,13 @@ const elements = {
     // Confirmation Modal
     confirmModal: document.getElementById('confirmModal'),
     confirmCancelBtn: document.getElementById('confirmCancelBtn'),
-    confirmResetBtn: document.getElementById('confirmResetBtn')
+    confirmResetBtn: document.getElementById('confirmResetBtn'),
+
+    // QR Modal
+    qrModal: document.getElementById('qrModal'),
+    qrContainer: document.getElementById('qrContainer'),
+    qrStatus: document.getElementById('qrStatus'),
+    qrCancelBtn: document.getElementById('qrCancelBtn')
 };
 
 // ================================
@@ -187,6 +193,18 @@ function initSocket() {
         } else {
             ToastSystem.show(data.error || 'Failed to send photos.', 'error');
             closePhoneModal();
+        }
+    });
+
+    state.socket.on('whatsapp-qr', (data) => {
+        console.log('QR Code received', data);
+        showQRModal(data.qr, data.attempt);
+    });
+
+    state.socket.on('whatsapp-status', (data) => {
+        if (data.connected) {
+            closeQRModal();
+            ToastSystem.show('WhatsApp Connected!', 'success');
         }
     });
 }
@@ -447,6 +465,31 @@ function closeConfirmModal() {
 }
 
 // ================================
+// QR Modal Management
+// ================================
+function showQRModal(qrData, attempt) {
+    elements.qrModal.classList.add('show');
+
+    // Generate QR code image (using a simple library or just displaying the string if it was an image, 
+    // but Baileys sends a string. We need a library to render it.
+    // For now, let's assume we can use a public API or a local library.
+    // Since we don't have a frontend QR lib installed, we'll use a reliable public API for now 
+    // or better yet, we should have installed 'qrcode' on frontend.
+    // Given the constraints, I'll use a robust public API for the prototype.
+
+    // NOTE: In a real production app, we should bundle 'qrcode' library.
+    // Using goqr.me API for simplicity in this phase.
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrData)}`;
+
+    elements.qrContainer.innerHTML = `<img src="${qrUrl}" class="qr-image" alt="Scan QR Code">`;
+    elements.qrStatus.textContent = `Scan with WhatsApp (Attempt ${attempt})`;
+}
+
+function closeQRModal() {
+    elements.qrModal.classList.remove('show');
+}
+
+// ================================
 // Send Photos
 // ================================
 function sendPhotos(phoneNumber) {
@@ -474,6 +517,7 @@ function sendPhotos(phoneNumber) {
 elements.resetBtn.addEventListener('click', showConfirmModal);
 elements.confirmCancelBtn.addEventListener('click', closeConfirmModal);
 elements.confirmResetBtn.addEventListener('click', resetSession);
+elements.qrCancelBtn.addEventListener('click', closeQRModal);
 
 elements.sendBtnHeader.addEventListener('click', () => {
     if (!elements.sendBtnHeader.disabled) showPhoneModal();

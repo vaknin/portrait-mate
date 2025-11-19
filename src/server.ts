@@ -104,6 +104,13 @@ io.on('connection', (socket) => {
   const whatsappStatus = whatsappService.getStatus();
   socket.emit('whatsapp-status', { connected: whatsappStatus.connected });
 
+  // Send latest QR code if available (for late-joining clients)
+  const latestQR = whatsappService.getLatestQR();
+  if (latestQR) {
+    socket.emit('whatsapp-qr', latestQR);
+    logger.debug(`[WebSocket] Sent existing QR code to ${socket.id}`);
+  }
+
   // 1. Request Photos (Client asks for list on load)
   socket.on('client:request-photos', async () => {
     try {
