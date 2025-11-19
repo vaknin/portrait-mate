@@ -81,152 +81,157 @@ body {
 /* ================================
    App Layout
    ================================ */
-.app-header {
+/* App Header Removed */
+/* .app-header & .header-content styles removed */
+
+/* Connection Status Indicator Removed from Header */
+/* .connection-status & .status-indicator styles removed */
+
+.app-main {
+    padding-top: env(safe-area-inset-top);
+    /* Only respect safe area */
+    padding-bottom: 100px;
+    /* Space for bottom action bar */
+    min-height: 100vh;
+}
+
+/* ================================
+   Bottom Action Bar
+   ================================ */
+.bottom-action-bar {
     position: fixed;
-    top: 0;
+    bottom: 0;
     left: 0;
     right: 0;
     background-color: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
     -webkit-backdrop-filter: var(--glass-blur);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: env(safe-area-inset-bottom);
     z-index: 100;
-    padding-top: env(safe-area-inset-top);
+    transform: translateY(100%);
     transition: transform var(--transition-base);
-}
-
-.header-content {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 var(--spacing-md);
-    height: 60px;
+    flex-direction: column;
 }
 
-.header-left {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-md);
-}
-
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-}
-
-/* Connection Status Indicator */
-.connection-status {
+.connection-warning {
+    background-color: rgba(239, 68, 68, 0.9);
+    color: white;
+    font-size: var(--font-size-sm);
+    padding: 4px 0;
+    text-align: center;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    gap: 8px;
+    backdrop-filter: blur(4px);
 }
 
-.status-indicator {
-    width: 8px;
-    height: 8px;
+.connection-warning.hidden {
+    display: none;
+}
+
+.warning-dot {
+    width: 6px;
+    height: 6px;
+    background-color: white;
     border-radius: 50%;
-    background-color: var(--color-error);
-    box-shadow: 0 0 8px var(--color-error);
-    transition: all var(--transition-base);
+    animation: pulse-white 1.5s infinite;
 }
 
-.status-indicator.connected {
-    background-color: var(--color-success);
-    box-shadow: 0 0 8px var(--color-success);
-}
-
-.status-indicator.disconnected {
-    animation: pulse-red 2s infinite;
-}
-
-@keyframes pulse-red {
+@keyframes pulse-white {
     0% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+        opacity: 0.5;
     }
 
-    70% {
-        box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    50% {
+        opacity: 1;
     }
 
     100% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+        opacity: 0.5;
     }
 }
 
-.app-main {
-    padding-top: 60px;
-    /* Header height */
-    padding-bottom: var(--spacing-lg);
-    min-height: 100vh;
-}
-
-/* Header Buttons */
-.btn-reset {
-    background-color: transparent;
-    color: var(--color-text-secondary);
-    border: none;
-    padding: 0 var(--spacing-sm);
-    height: 36px;
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    border-radius: 6px;
-}
-
-.btn-reset:hover {
-    color: var(--color-text);
-    background-color: rgba(255, 255, 255, 0.05);
-}
-
-.btn-send-header {
-    position: relative;
-    background-color: var(--color-accent);
-    color: white;
-    padding: 0 var(--spacing-md);
-    height: 36px;
-    font-size: var(--font-size-sm);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    border-radius: 18px;
-    /* Pill shape */
-    border: none;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
-    transition: all var(--transition-base);
-}
-
-.btn-send-header:hover:not(:disabled) {
-    background-color: var(--color-accent-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.5);
-}
-
-.btn-send-header:active:not(:disabled) {
+.bottom-action-bar.show {
     transform: translateY(0);
 }
 
-.btn-send-header:disabled {
+.action-bar-content {
+    display: flex;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* Action Bar Buttons */
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 54px;
+    padding: 0 var(--spacing-lg);
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    font-family: var(--font-family);
+    border: none;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    gap: var(--spacing-sm);
+}
+
+.btn-action:active {
+    transform: scale(0.96);
+}
+
+.btn-action-primary {
+    flex: 1;
+    background-color: var(--color-accent);
+    color: white;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-action-primary:hover:not(:disabled) {
+    background-color: var(--color-accent-hover);
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+.btn-action-primary:disabled {
     background-color: var(--color-surface-hover);
     color: var(--color-text-secondary);
     box-shadow: none;
     cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.btn-action-secondary {
+    background-color: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    padding: 0 var(--spacing-md);
+}
+
+.btn-action-secondary:hover {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: var(--color-error);
+    color: var(--color-error);
 }
 
 .selection-badge {
-    min-width: 18px;
-    height: 18px;
+    min-width: 20px;
+    height: 20px;
     background-color: white;
     color: var(--color-accent);
-    border-radius: 9px;
+    border-radius: 10px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
-    padding: 0 5px;
+    padding: 0 6px;
     transition: transform var(--transition-spring);
 }
 
@@ -248,8 +253,8 @@ body {
     }
 }
 
-.btn-send-header:disabled .selection-badge {
-    background-color: rgba(255, 255, 255, 0.1);
+.btn-action-primary:disabled .selection-badge {
+    background-color: rgba(255, 255, 255, 0.2);
     color: var(--color-text-secondary);
 }
 
@@ -293,6 +298,19 @@ body {
     color: var(--color-text-secondary);
     margin-bottom: var(--spacing-md);
     opacity: 0.3;
+    animation: floatIcon 3s ease-in-out infinite;
+}
+
+@keyframes floatIcon {
+
+    0%,
+    100% {
+        transform: translateY(0px);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
 }
 
 .empty-title {
@@ -378,10 +396,16 @@ body {
     content: '';
     position: absolute;
     inset: 0;
-    border: 4px solid var(--color-accent);
-    background-color: rgba(59, 130, 246, 0.2);
+    border: 6px solid var(--color-accent);
+    /* Increased from 4px */
+    background-color: rgba(59, 130, 246, 0.3);
+    /* Increased from 0.2 */
     pointer-events: none;
     animation: borderIn 0.2s ease-out;
+}
+
+.photo-card-wrapper.selected.pulse::after {
+    animation: borderIn 0.2s ease-out, pulseSelect 0.6s ease-out;
 }
 
 @keyframes borderIn {
@@ -393,6 +417,20 @@ body {
     to {
         opacity: 1;
         transform: scale(1);
+    }
+}
+
+@keyframes pulseSelect {
+    0% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    }
+
+    50% {
+        box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
     }
 }
 
@@ -746,14 +784,65 @@ body {
 @keyframes toastSlideUp {
     from {
         opacity: 0;
-        transform: translateY(20px) scale(0.95);
+        transform: translateY(20px);
     }
 
     to {
         opacity: 1;
-        transform: translateY(0) scale(1);
+        transform: translateY(0);
     }
 }
+
+@keyframes toastFadeOut {
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* ================================
+   PhotoSwipe Custom UI
+   ================================ */
+.pswp__button--select {
+    background: none !important;
+    width: 44px !important;
+    height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-right: 10px !important;
+}
+
+.pswp-select-icon {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.pswp__button--select.selected .pswp-select-icon {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+.pswp-select-icon svg {
+    width: 16px;
+    height: 16px;
+    color: white;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: all 0.2s ease;
+}
+
+.pswp__button--select.selected .pswp-select-icon svg {
+    opacity: 1;
+    transform: scale(1);
+}
+
 
 @keyframes toastFadeOut {
     to {
@@ -817,9 +906,17 @@ body {
 }
 
 @keyframes pulse-gray {
-    0% { opacity: 0.6; }
-    50% { opacity: 1; }
-    100% { opacity: 0.6; }
+    0% {
+        opacity: 0.6;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.6;
+    }
 }
 
 .qr-status {

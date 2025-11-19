@@ -23,24 +23,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <!-- Header -->
-    <header class="app-header">
-        <div class="header-content">
-            <div class="header-left">
-                <div class="connection-status" id="connectionStatus">
-                    <div class="status-indicator"></div>
-                </div>
-            </div>
-            
-            <div class="header-right">
-                <button class="btn btn-reset" id="resetBtn" type="button">Reset</button>
-                <button class="btn btn-send-header" id="sendBtnHeader" disabled type="button">
-                    <span class="btn-text">Send</span>
-                    <span class="selection-badge" id="selectionBadge">0</span>
-                </button>
-            </div>
-        </div>
-    </header>
+    <!-- Header removed to maximize space -->
 
     <!-- Main Content Area -->
     <main class="app-main">
@@ -72,6 +55,23 @@
         </section>
 
     </main>
+
+    <!-- Bottom Action Bar -->
+    <div class="bottom-action-bar" id="bottomActionBar">
+        <div class="connection-warning hidden" id="connectionWarning">
+            <span class="warning-dot"></span>
+            Reconnecting...
+        </div>
+        <div class="action-bar-content">
+            <button class="btn-action btn-action-secondary" id="resetBtn" type="button">
+                Reset
+            </button>
+            <button class="btn-action btn-action-primary" id="sendBtn" disabled type="button">
+                <span class="btn-text">Send</span>
+                <span class="selection-badge" id="selectionBadge">0</span>
+            </button>
+        </div>
+    </div>
 
     <!-- Phone Number Popup Modal -->
     <div class="modal-overlay" id="phoneModal">

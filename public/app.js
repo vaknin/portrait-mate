@@ -13,11 +13,15 @@ const state = {
 // ================================
 const elements = {
     // Header
-    connectionStatus: document.querySelector('.status-indicator'),
-    resetBtn: document.getElementById('resetBtn'),
-    sendBtnHeader: document.getElementById('sendBtnHeader'),
-    selectionBadge: document.getElementById('selectionBadge'),
+    // connectionStatus removed
+    connectionWarning: document.getElementById('connectionWarning'),
     toastContainer: document.getElementById('toastContainer'),
+
+    // Bottom Action Bar
+    bottomActionBar: document.getElementById('bottomActionBar'),
+    resetBtn: document.getElementById('resetBtn'),
+    sendBtn: document.getElementById('sendBtn'),
+    selectionBadge: document.getElementById('selectionBadge'),
 
     // Gallery
     emptyState: document.getElementById('emptyState'),
@@ -211,11 +215,9 @@ function initSocket() {
 
 function updateConnectionStatus(connected) {
     if (connected) {
-        elements.connectionStatus.classList.add('connected');
-        elements.connectionStatus.classList.remove('disconnected');
+        elements.connectionWarning.classList.add('hidden');
     } else {
-        elements.connectionStatus.classList.remove('connected');
-        elements.connectionStatus.classList.add('disconnected');
+        elements.connectionWarning.classList.remove('hidden');
     }
 }
 
@@ -273,14 +275,94 @@ function initPhotoSwipe() {
         pinchToClose: true,
         closeOnVerticalDrag: true,
         bgOpacity: 0.95,
-        zoom: true,
+        zoom: false, // Disable default zoom button
         maxZoomLevel: 4,
         doubleTapAction: 'zoom',
+        bgClickAction: 'close', // Click outside to close
+        tapAction: 'close', // Tap on image to close (can be changed if zoom is preferred on tap)
         paddingFn: () => ({ top: 30, bottom: 30, left: 10, right: 10 })
+    });
+
+    // Add Custom Select Button
+    lightbox.on('uiRegister', () => {
+        lightbox.pswp.ui.registerElement({
+            name: 'select-button',
+            order: 9, // Place it where zoom usually is
+            isButton: true,
+            tagName: 'button',
+            html: `
+                <div class="pswp-select-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                </div>
+            `,
+            onClick: (event, el, pswp) => {
+                const currIndex = pswp.currIndex;
+                // We need to map pswp index to our photos array
+                // Since we render in reverse order, but PhotoSwipe reads DOM order:
+                // DOM order: [Newest ... Oldest]
+                // State photos: [Oldest ... Newest]
+                // So DOM index 0 corresponds to State index (length - 1)
+
+                // Wait, let's verify createPhotoCard logic:
+                // createPhotoCard uses `state.photos.length - 1 - reverseIndex` as the index.
+                // The DOM is appended in reverse order loop.
+                // So the first element in DOM (index 0) corresponds to the last element in state.photos.
+
+                // However, PhotoSwipe uses the index of the clicked element relative to the gallery.
+                // So pswp.currIndex 0 is the first image in the grid (Newest).
+
+                // Let's find the photo index from the DOM element
+                const slide = pswp.currSlide;
+                // The slide data comes from the anchor tag.
+                // We can look up the photo by src or by calculating the index.
+
+                // Easiest way: The DOM elements are in order 0..N in the grid.
+                // The grid children correspond to pswp indices.
+                // Grid child 0 is the newest photo.
+                // Grid child 0 has data-index = (total - 1).
+
+                const gridChildren = Array.from(elements.photoGrid.children);
+                const activeElement = gridChildren[currIndex];
+                const originalIndex = parseInt(activeElement.dataset.index, 10);
+
+                togglePhotoSelection(originalIndex);
+
+                // Update the button state immediately
+                updatePhotoSwipeSelectButton(el, originalIndex);
+            }
+        });
+    });
+
+    // Update button state when slide changes
+    lightbox.on('change', () => {
+        const pswp = lightbox.pswp;
+        const currIndex = pswp.currIndex;
+        const gridChildren = Array.from(elements.photoGrid.children);
+        const activeElement = gridChildren[currIndex];
+        if (activeElement) {
+            const originalIndex = parseInt(activeElement.dataset.index, 10);
+
+            // Find the button element in the UI
+            const btn = pswp.element.querySelector('.pswp__button--select');
+            if (btn) {
+                updatePhotoSwipeSelectButton(btn, originalIndex);
+            }
+        }
     });
 
     lightbox.init();
     state.lightbox = lightbox;
+}
+
+function updatePhotoSwipeSelectButton(btnElement, photoIndex) {
+    const photo = state.photos[photoIndex];
+    if (photo && photo.selected) {
+        btnElement.classList.add('selected');
+    } else {
+        btnElement.classList.remove('selected');
+    }
 }
 
 async function addPhoto(photoData) {
@@ -307,8 +389,10 @@ async function addPhoto(photoData) {
 function updatePhotoGallery() {
     if (state.photos.length > 0) {
         elements.emptyState.classList.add('hidden');
+        updateBottomBar();
     } else {
         elements.emptyState.classList.remove('hidden');
+        updateBottomBar();
     }
 
     elements.photoGrid.innerHTML = '';
@@ -317,16 +401,19 @@ function updatePhotoGallery() {
     [...state.photos].reverse().forEach((photo, reverseIndex) => {
         // Calculate original index
         const index = state.photos.length - 1 - reverseIndex;
-        const photoCard = createPhotoCard(photo, index);
+        const photoCard = createPhotoCard(photo, index, reverseIndex);
         elements.photoGrid.appendChild(photoCard);
     });
 }
 
-function createPhotoCard(photo, index) {
+function createPhotoCard(photo, index, reverseIndex = 0) {
     const wrapper = document.createElement('div');
     wrapper.className = 'photo-card-wrapper';
     wrapper.dataset.index = index; // Store index for easy access
     if (photo.selected) wrapper.classList.add('selected');
+
+    // Add staggered animation delay
+    wrapper.style.animationDelay = `${reverseIndex * 0.05}s`;
 
     // Main interaction: Toggle Selection
     wrapper.addEventListener('click', (e) => {
@@ -384,21 +471,25 @@ function createPhotoCard(photo, index) {
 
 function togglePhotoSelection(index) {
     const photo = state.photos[index];
+    const wasSelected = photo.selected;
     photo.selected = !photo.selected;
 
     triggerHaptic();
     saveState();
 
     // OPTIMIZED: Only update the specific card instead of re-rendering the whole gallery
-    // We need to find the card corresponding to this photo index.
-    // Since we render in reverse order, we can't just use nth-child(index).
-    // Let's find it by the data-index attribute we added.
     const cardWrapper = elements.photoGrid.querySelector(`.photo-card-wrapper[data-index="${index}"]`);
     if (cardWrapper) {
         if (photo.selected) {
             cardWrapper.classList.add('selected');
+            // Add pulse animation only on first selection
+            if (!wasSelected) {
+                cardWrapper.classList.add('pulse');
+                setTimeout(() => cardWrapper.classList.remove('pulse'), 600);
+            }
         } else {
             cardWrapper.classList.remove('selected');
+            cardWrapper.classList.remove('pulse');
         }
     } else {
         // Fallback if not found (shouldn't happen)
@@ -407,6 +498,7 @@ function togglePhotoSelection(index) {
 
     updateSelectionCount();
     updateSendButton();
+    updateBottomBar();
 }
 
 function updateSelectionCount() {
@@ -421,7 +513,16 @@ function updateSelectionCount() {
 
 function updateSendButton() {
     const hasSelection = state.photos.some(p => p.selected);
-    elements.sendBtnHeader.disabled = !hasSelection;
+    elements.sendBtn.disabled = !hasSelection;
+}
+
+function updateBottomBar() {
+    // Show bottom bar when there are photos, hide when empty
+    if (state.photos.length > 0) {
+        elements.bottomActionBar.classList.add('show');
+    } else {
+        elements.bottomActionBar.classList.remove('show');
+    }
 }
 
 // ================================
@@ -519,8 +620,8 @@ elements.confirmCancelBtn.addEventListener('click', closeConfirmModal);
 elements.confirmResetBtn.addEventListener('click', resetSession);
 elements.qrCancelBtn.addEventListener('click', closeQRModal);
 
-elements.sendBtnHeader.addEventListener('click', () => {
-    if (!elements.sendBtnHeader.disabled) showPhoneModal();
+elements.sendBtn.addEventListener('click', () => {
+    if (!elements.sendBtn.disabled) showPhoneModal();
 });
 
 elements.phoneForm.addEventListener('submit', (e) => {
