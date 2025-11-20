@@ -387,7 +387,21 @@ async function addPhoto(photoData) {
     };
     state.photos.push(photo);
 
-    updatePhotoGallery();
+    // Optimization: Prepend single card instead of rebuilding entire grid
+    if (elements.photoGrid.children.length > 0 || state.photos.length === 1) {
+        elements.emptyState.classList.add('hidden');
+        updateBottomBar();
+
+        // Create card with "developing" animation
+        const index = state.photos.length - 1;
+        const photoCard = createPhotoCard(photo, index, 0, true); // true = isNew
+
+        // Insert at the beginning (visual top)
+        elements.photoGrid.prepend(photoCard);
+    } else {
+        updatePhotoGallery();
+    }
+
     updateSelectionCount();
     updateSendButton();
 }
@@ -407,19 +421,24 @@ function updatePhotoGallery() {
     [...state.photos].reverse().forEach((photo, reverseIndex) => {
         // Calculate original index
         const index = state.photos.length - 1 - reverseIndex;
-        const photoCard = createPhotoCard(photo, index, reverseIndex);
+        const photoCard = createPhotoCard(photo, index, reverseIndex, false);
         elements.photoGrid.appendChild(photoCard);
     });
 }
 
-function createPhotoCard(photo, index, reverseIndex = 0) {
+function createPhotoCard(photo, index, reverseIndex = 0, isNew = false) {
     const wrapper = document.createElement('div');
     wrapper.className = 'photo-card-wrapper';
     wrapper.dataset.index = index; // Store index for easy access
     if (photo.selected) wrapper.classList.add('selected');
 
-    // Add staggered animation delay
-    wrapper.style.animationDelay = `${reverseIndex * 0.05}s`;
+    // Add "developing" animation for new photos
+    if (isNew) {
+        wrapper.style.animation = 'develop 2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards';
+    } else {
+        // Add staggered animation delay for initial load
+        wrapper.style.animationDelay = `${reverseIndex * 0.05}s`;
+    }
 
     // Main interaction: Toggle Selection
     wrapper.addEventListener('click', (e) => {
@@ -492,6 +511,10 @@ function togglePhotoSelection(index) {
             if (!wasSelected) {
                 cardWrapper.classList.add('pulse');
                 setTimeout(() => cardWrapper.classList.remove('pulse'), 600);
+
+                // Trigger Fly to Cart Animation
+                const img = cardWrapper.querySelector('img');
+                if (img) animateFlyToCart(img, elements.selectionBadge);
             }
         } else {
             cardWrapper.classList.remove('selected');
@@ -505,6 +528,39 @@ function togglePhotoSelection(index) {
     updateSelectionCount();
     updateSendButton();
     updateBottomBar();
+}
+
+function animateFlyToCart(startEl, endEl) {
+    const startRect = startEl.getBoundingClientRect();
+    const endRect = endEl.getBoundingClientRect();
+
+    const clone = startEl.cloneNode(true);
+    clone.style.position = 'fixed';
+    clone.style.left = `${startRect.left}px`;
+    clone.style.top = `${startRect.top}px`;
+    clone.style.width = `${startRect.width}px`;
+    clone.style.height = `${startRect.height}px`;
+    clone.style.zIndex = '1000';
+    clone.style.pointerEvents = 'none';
+    clone.style.transition = 'all 0.6s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    clone.style.borderRadius = '12px';
+    clone.style.opacity = '0.8';
+
+    document.body.appendChild(clone);
+
+    // Force reflow
+    void clone.offsetWidth;
+
+    clone.style.left = `${endRect.left + endRect.width / 2 - 10}px`;
+    clone.style.top = `${endRect.top + endRect.height / 2 - 10}px`;
+    clone.style.width = '20px';
+    clone.style.height = '20px';
+    clone.style.opacity = '0';
+    clone.style.borderRadius = '50%';
+
+    setTimeout(() => {
+        clone.remove();
+    }, 600);
 }
 
 function updateSelectionCount() {

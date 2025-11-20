@@ -21,12 +21,17 @@ const app = express();
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer);
 
+import { SocketController } from './controllers/socketController.js';
+
 // Initialize services
 const cameraService = new CameraService();
 const whatsappService = new WhatsAppService({
   io,
   authDir: config.AUTH_INFO_DIR,
 });
+
+// Initialize Controllers
+const socketController = new SocketController(io, cameraService, whatsappService);
 
 // Middleware
 app.use(express.json());
@@ -64,150 +69,11 @@ cameraService.on('error', (error) => {
 })();
 
 // ==========================================
-// Helper Functions
-// ==========================================
-
-/**
- * Convert phone number to WhatsApp JID format
- */
-function convertToWhatsAppJID(phone: string): string {
-  const cleaned = phone.replace(/[\s-]/g, '');
-
-  if (cleaned.startsWith('0') && cleaned.length === 10) {
-    return `972${cleaned.slice(1)}@s.whatsapp.net`;
-  }
-
-  if (cleaned.startsWith('+')) {
-    return `${cleaned.slice(1)}@s.whatsapp.net`;
-  }
-
-  return `${cleaned}@s.whatsapp.net`;
-}
-
-// Validation Schemas
-const SendPhotosSchema = z.object({
-  phone: z.string().min(10),
-  photos: z.array(z.string()),
-});
-
-// ==========================================
-// Socket.io Handlers (Stateless)
+// Socket.io Handlers (Delegated to Controller)
 // ==========================================
 
 io.on('connection', (socket) => {
-  logger.debug(`[WebSocket] Client connected: ${socket.id}`);
-
-  // Send initial status
-  const cameraStatus = cameraService.getStatus();
-  socket.emit('camera-status', { connected: cameraStatus.connected });
-
-  const whatsappStatus = whatsappService.getStatus();
-  socket.emit('whatsapp-status', { connected: whatsappStatus.connected });
-
-  // Send latest QR code if available (for late-joining clients)
-  const latestQR = whatsappService.getLatestQR();
-  if (latestQR) {
-    socket.emit('whatsapp-qr', latestQR);
-    logger.debug(`[WebSocket] Sent existing QR code to ${socket.id}`);
-  }
-
-  // 1. Request Photos (Client asks for list on load)
-  socket.on('client:request-photos', async () => {
-    try {
-      const files = await readdir(config.PHOTOS_DIR);
-      const jpgFiles = files.filter(
-        (f) => f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg'),
-      );
-
-      // Send each photo as an event (simulating capture stream)
-      // This is simple and reuses the existing frontend logic
-      for (const filename of jpgFiles) {
-        socket.emit('photo-captured', {
-          filename,
-          path: `/photos/${filename}`,
-        });
-      }
-      logger.debug(`[WebSocket] Sent ${jpgFiles.length} existing photos to ${socket.id}`);
-    } catch (error) {
-      logger.error(`[WebSocket] Error listing photos: ${error}`);
-    }
-  });
-
-  // 2. Send Photos (Client sends list of filenames)
-  socket.on('client:send-photos', async (data: ClientSendPhotosEvent) => {
-    const validation = SendPhotosSchema.safeParse(data);
-
-    if (!validation.success) {
-      logger.warn(`[WebSocket] Invalid send request: ${JSON.stringify(validation.error.format())}`);
-      socket.emit('send-complete', {
-        success: false,
-        count: 0,
-        error: 'Invalid request parameters',
-      });
-      return;
-    }
-
-    const { phone, photos } = validation.data;
-
-    if (photos.length === 0) {
-      socket.emit('send-complete', { success: false, count: 0, error: 'No photos selected' });
-      return;
-    }
-
-    const jid = convertToWhatsAppJID(phone);
-    logger.info(`[Send] Sending ${photos.length} photos to ${phone}`);
-
-    const photoPaths = photos.map((filename) => join(process.cwd(), 'session', filename));
-
-    try {
-      const success = await whatsappService.sendPhotos(jid, photoPaths);
-
-      if (!success) {
-        socket.emit('send-complete', {
-          success: false,
-          count: 0,
-          error: 'Failed to send photos',
-        });
-        return;
-      }
-
-      socket.emit('send-complete', { success: true, count: photos.length });
-    } catch (error) {
-      logger.error(`[Send] Error: ${error}`);
-      socket.emit('send-complete', { success: false, count: 0, error: 'Internal server error' });
-    }
-  });
-
-  // 3. Reset Session (Delete all files)
-  socket.on('client:reset-session', async () => {
-    try {
-      logger.info(`[Reset] Request from ${socket.id}`);
-      cameraService.pause();
-
-      const files = await readdir(config.PHOTOS_DIR);
-      const jpgFiles = files.filter(
-        (f) => f.toLowerCase().endsWith('.jpg') || f.toLowerCase().endsWith('.jpeg'),
-      );
-
-      await Promise.all(jpgFiles.map((file) => unlink(join(config.PHOTOS_DIR, file))));
-
-      logger.info(`[Reset] Deleted ${jpgFiles.length} photos`);
-      cameraService.resume();
-
-      // Broadcast reset to all clients (so everyone clears their gallery)
-      io.emit('session-reset');
-    } catch (error) {
-      logger.error(`[Reset] Error: ${error}`);
-      cameraService.resume();
-    }
-  });
-
-  // 4. Trigger Remote Capture
-  // 4. Trigger Remote Capture (Removed)
-
-  socket.on('disconnect', () => {
-    logger.debug(`[WebSocket] Client disconnected: ${socket.id}`);
-  });
+  socketController.handleConnection(socket);
 });
 
 // ==========================================
