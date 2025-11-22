@@ -10,7 +10,7 @@ Shoot strangers → Photos appear on your phone instantly → They select favori
 
 ### Stack
 
-**Backend:** Bun • TypeScript • Express • Baileys (WhatsApp) • gphoto2
+**Backend:** Bun • TypeScript • Express • Baileys (WhatsApp) • gphoto2 • Pino • Zod • Sharp
 **Frontend:** Vanilla JS • PhotoSwipe • Socket.io
 
 ---
@@ -36,10 +36,10 @@ bun run compile
 
 1. Connect camera via USB (tethered shooting)
 2. Open webapp on phone via WiFi
-3. Take portraits → Photos appear in phone gallery instantly
-4. Subject selects favorites
-5. Send to their WhatsApp number
-6. Reset for next person
+3. Take portraits → Photos appear in phone gallery instantly (no refresh needed)
+4. Subject selects favorites (tap to select)
+5. Send to their WhatsApp number (auto-formats)
+6. Reset for next person (clears session & thumbnails)
 
 ---
 

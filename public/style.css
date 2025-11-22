@@ -60,9 +60,11 @@
         opacity: 0;
         transform: scale(0.98);
     }
+
     40% {
         opacity: 1;
     }
+
     100% {
         filter: blur(0) grayscale(0%) contrast(1);
         transform: scale(1);
@@ -74,10 +76,12 @@
         transform: scale(1);
         opacity: 1;
     }
+
     50% {
         transform: scale(0.5);
         opacity: 0.8;
     }
+
     100% {
         transform: scale(0.1);
         opacity: 0;
@@ -109,6 +113,7 @@ html {
     font-size: 16px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    height: 100%;
 }
 
 body {
@@ -122,23 +127,15 @@ body {
     -webkit-tap-highlight-color: transparent;
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
+    height: 100%;
 }
 
 /* ================================
    App Layout
    ================================ */
-/* App Header Removed */
-/* .app-header & .header-content styles removed */
-
-/* Connection Status Indicator Removed from Header */
-/* .connection-status & .status-indicator styles removed */
 
 .app-main {
-    padding-top: env(safe-area-inset-top);
-    /* Only respect safe area */
     padding-bottom: 100px;
-    /* Space for bottom action bar */
-    min-height: 100vh;
 }
 
 /* ================================
@@ -157,21 +154,18 @@ body {
     z-index: 100;
     transform: translateY(100%);
     transition: transform var(--transition-base);
-    display: flex;
-    flex-direction: column;
 }
 
 .connection-warning {
-    background-color: rgba(239, 68, 68, 0.9);
-    color: white;
-    font-size: var(--font-size-sm);
-    padding: 4px 0;
-    text-align: center;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    backdrop-filter: blur(4px);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    flex-shrink: 0;
 }
 
 .connection-warning.hidden {
@@ -179,24 +173,22 @@ body {
 }
 
 .warning-dot {
-    width: 6px;
-    height: 6px;
-    background-color: white;
+    width: 8px;
+    height: 8px;
+    background-color: var(--color-error);
     border-radius: 50%;
-    animation: pulse-white 1.5s infinite;
+    animation: pulse-error 1.5s infinite;
 }
 
-@keyframes pulse-white {
-    0% {
-        opacity: 0.5;
+@keyframes pulse-error {
+    0%, 100% {
+        opacity: 0.6;
+        transform: scale(1);
     }
 
     50% {
         opacity: 1;
-    }
-
-    100% {
-        opacity: 0.5;
+        transform: scale(1.2);
     }
 }
 
@@ -206,6 +198,7 @@ body {
 
 .action-bar-content {
     display: flex;
+    align-items: center;
     gap: var(--spacing-md);
     padding: var(--spacing-md);
     max-width: 600px;
@@ -305,22 +298,8 @@ body {
 }
 
 /* ================================
-   Screens
+   Gallery Screen
    ================================ */
-.screen {
-    display: flex;
-    flex-direction: column;
-    min-height: calc(100vh - 140px);
-}
-
-.screen.hidden {
-    display: none;
-}
-
-.screen-content {
-    flex: 1;
-    padding: var(--spacing-sm);
-}
 
 /* ================================
    Gallery Screen
@@ -332,8 +311,9 @@ body {
     justify-content: center;
     padding: var(--spacing-xl);
     text-align: center;
-    min-height: 60vh;
-    animation: fadeIn 0.5s ease-out;
+    flex: 1;
+    width: 100%;
+    /* animation: fadeIn 0.5s ease-out; Removed undefined animation */
 }
 
 .empty-state.hidden {
@@ -342,7 +322,7 @@ body {
 
 .empty-icon {
     color: var(--color-text-secondary);
-    margin-bottom: var(--spacing-md);
+    /* margin-bottom removed for centering */
     opacity: 0.3;
     animation: floatIcon 3s ease-in-out infinite;
 }
@@ -372,39 +352,37 @@ body {
 }
 
 /* Photo Gallery Grid */
-.photo-gallery {
-    width: 100%;
+.photo-grid {
+    grid-template-columns: repeat(2, 1fr);
+    display: grid;
+    gap: 2px;
 }
 
-.photo-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    /* Bigger items (was 3) */
-    gap: 2px;
-    padding-bottom: var(--spacing-lg);
+.photo-grid.hidden {
+    display: none;
 }
 
 /* Tablet and larger */
 @media (min-width: 640px) {
     .photo-grid {
         grid-template-columns: repeat(3, 1fr);
-        /* Was 4 */
-        gap: 8px;
-        padding: var(--spacing-md);
+        gap: 2px;
+        padding: 4px;
     }
 }
 
 @media (min-width: 1024px) {
     .photo-grid {
+        gap: 4px;
         grid-template-columns: repeat(4, 1fr);
-        /* Was 6 */
     }
 }
 
 /* Photo Card */
 .photo-card-wrapper {
     position: relative;
-    aspect-ratio: 1;
+    width: 100%;
+    aspect-ratio: 3 / 2;
     background-color: var(--color-surface);
     overflow: hidden;
     cursor: pointer;
@@ -849,7 +827,12 @@ body {
 /* ================================
    PhotoSwipe Custom UI
    ================================ */
-.pswp__button--select {
+/* Ensure consistent alignment for all top bar buttons */
+.pswp__button {
+    align-self: center !important;
+}
+
+.pswp__button--select-button {
     background: none !important;
     width: 44px !important;
     height: 44px !important;
@@ -857,6 +840,7 @@ body {
     align-items: center !important;
     justify-content: center !important;
     margin-right: 10px !important;
+    padding: 0 !important;
 }
 
 .pswp-select-icon {
@@ -870,7 +854,7 @@ body {
     transition: all 0.2s ease;
 }
 
-.pswp__button--select.selected .pswp-select-icon {
+.pswp__button--select-button.selected .pswp-select-icon {
     background-color: var(--color-accent);
     border-color: var(--color-accent);
 }
@@ -884,7 +868,7 @@ body {
     transition: all 0.2s ease;
 }
 
-.pswp__button--select.selected .pswp-select-icon svg {
+.pswp__button--select-button.selected .pswp-select-icon svg {
     opacity: 1;
     transform: scale(1);
 }

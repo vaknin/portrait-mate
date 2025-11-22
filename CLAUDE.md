@@ -25,6 +25,9 @@ Street/portrait photography workflow for shooting strangers and instantly sendin
 - **TypeScript (ESM)** - type-safe backend
 - **Express.js** - web server
 - **Baileys** (@whiskeysockets/baileys v7) - WhatsApp WebSocket API
+- **Pino** - high-performance structured logging
+- **Zod** - schema validation
+- **Sharp** - high-performance image processing
 - **child_process** - execute gphoto2 commands
 - **Socket.io** - real-time photo updates
 - **qrcode-terminal** - WhatsApp QR authentication
@@ -47,20 +50,32 @@ Street/portrait photography workflow for shooting strangers and instantly sendin
 portrait-mate/
 ├── src/
 │   ├── server.ts           # Main Express server
-│   ├── services/
-│   │   ├── camera.ts       # gphoto2 camera control & monitoring
-│   │   └── whatsapp.ts     # Baileys WhatsApp integration (Phase 4)
-│   └── types/
-│       └── index.ts        # TypeScript type definitions
-├── public/                 # Frontend files (served statically)
+│   ├── controllers/        # Request/Socket handlers
+│   │   ├── connectController.ts
+│   │   └── socketController.ts
+│   ├── services/           # Business logic
+│   │   ├── camera.ts       # gphoto2 camera control
+│   │   ├── whatsapp.ts     # Baileys integration
+│   │   └── image.ts        # Thumbnail generation (Sharp)
+│   ├── types/
+│   │   └── index.ts        # TypeScript definitions
+│   ├── config.ts           # Zod-validated config
+│   └── logger.ts           # Pino logger instance
+├── public/                 # Frontend files
+│   ├── js/
+│   │   └── modules/        # ES Modules
+│   │       ├── gallery.js
+│   │       ├── socket.js
+│   │       ├── state.js
+│   │       ├── ui-core.js
+│   │       └── utils.js
 │   ├── index.html          # Main UI
 │   ├── style.css           # Styling
-│   └── app.js              # Frontend JavaScript
-├── session/                # All captured photos stored here
-│   └── photo_*.jpg         # Photos from camera (auto-saved)
-├── auth_info/              # Baileys auth state (gitignored)
-├── package.json            # Dependencies (type: module for ESM)
-├── tsconfig.json           # TypeScript configuration
+│   └── app.js              # App entry point
+├── session/                # Captured photos
+├── auth_info/              # Baileys auth state
+├── package.json            # Dependencies
+├── tsconfig.json           # TypeScript config
 └── .env                    # Environment variables
 ```
 
@@ -75,6 +90,7 @@ portrait-mate/
 - [x] Create TypeScript type definitions (src/types/index.ts)
 - [x] Configure build/dev scripts (Bun runs TypeScript natively)
 - [x] Test server startup (verified working on port 3000)
+- [x] Add linting and formatting scripts (`bun run lint`, `bun run format`)
 
 **Note:** Frontend HTML/CSS/JS deferred to Phase 3
 
@@ -438,3 +454,18 @@ gphoto2 --set-config capturetarget=1 --wait-event-and-download --keep --filename
 - Simplified frontend image loading
 - Single point of truth for all photos
 - Easier to debug and maintain
+
+## Architecture Refactor & Improvements (Post-Phase 3)
+
+### Modular Architecture
+- **Backend**: Split `server.ts` into Controllers (`socketController`, `connectController`) and Services (`camera`, `whatsapp`, `image`).
+- **Frontend**: Refactored `app.js` into ES Modules (`gallery`, `socket`, `state`, `ui-core`, `utils`) for better maintainability.
+- **Validation**: Replaced `process.env` usage with `Zod` schema validation in `config.ts`.
+- **Logging**: Replaced `console.log` with `Pino` for structured, performant logging.
+
+### Robust Session Reset
+- **Problem**: Resetting session didn't clear thumbnails or prevent race conditions if camera was active.
+- **Solution**:
+    1.  **Frontend**: `clearState()` now properly empties the in-memory photos array.
+    2.  **Backend**: `handleResetSession` deletes both original photos and generated thumbnails.
+    3.  **Concurrency**: Implemented `cameraService.pause()` to ensure camera is idle before resetting, preventing "ghost" photos.

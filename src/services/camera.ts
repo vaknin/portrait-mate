@@ -36,6 +36,7 @@ export class CameraService extends EventEmitter {
   private connectionState: CameraConnectionState = CameraConnectionState.DISCONNECTED;
   private isShuttingDown = false;
   private isBusy = false; // Prevents concurrent operations
+  private paused = false; // Paused state
   private pollInterval: NodeJS.Timeout | null = null;
   private readonly POLL_MS = 2000;
   private sessionStartTime: Date;
@@ -90,7 +91,7 @@ export class CameraService extends EventEmitter {
     if (this.pollInterval) return;
 
     this.pollInterval = setInterval(async () => {
-      if (this.isShuttingDown || this.isBusy) return;
+      if (this.isShuttingDown || this.isBusy || this.paused) return;
 
       try {
         const connected = await this.checkCameraConnected();
@@ -436,6 +437,21 @@ export class CameraService extends EventEmitter {
   }
 
   // No-op methods for compatibility if needed, or remove them
-  public pause(): void { }
-  public resume(): void { }
+  /**
+   * Pause camera monitoring (e.g. during reset)
+   */
+  public async pause(): Promise<void> {
+    this.paused = true;
+    // Wait for any current operation to finish
+    while (this.isBusy) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+
+  /**
+   * Resume camera monitoring
+   */
+  public resume(): void {
+    this.paused = false;
+  }
 }

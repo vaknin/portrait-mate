@@ -29,46 +29,33 @@
     <!-- Main Content Area -->
     <main class="app-main">
 
-        <!-- Photo Gallery (Default Screen) -->
-        <section class="screen" id="galleryScreen">
-            <div class="screen-content">
-
-                <!-- Empty State -->
-                <div class="empty-state" id="emptyState">
-                    <div class="empty-icon">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                            <circle cx="12" cy="13" r="4"/>
-                        </svg>
-                    </div>
-                    <h3 class="empty-title">Ready for Photos</h3>
-                    <p class="empty-text">Photos will appear here instantly</p>
-                </div>
-
-                <!-- Photo Gallery Grid -->
-                <div class="photo-gallery" id="photoGallery">
-                    <div class="photo-grid" id="photoGrid">
-                        <!-- Photos will be added dynamically -->
-                    </div>
-                </div>
-
+        <!-- Empty State (Required for JS) -->
+        <div class="empty-state" id="emptyState">
+            <div class="empty-icon">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                </svg>
             </div>
-        </section>
+        </div>
+
+        <!-- Photo Gallery Grid -->
+        <div class="photo-grid hidden" id="photoGrid">
+            <!-- Photos will be added dynamically -->
+        </div>
 
     </main>
 
     <!-- Bottom Action Bar -->
     <div class="bottom-action-bar" id="bottomActionBar">
-        <div class="connection-warning hidden" id="connectionWarning">
-            <span class="warning-dot"></span>
-            Reconnecting...
-        </div>
         <div class="action-bar-content">
+            <div class="connection-warning hidden" id="connectionWarning">
+                <span class="warning-dot"></span>
+            </div>
+
             <button class="btn-action btn-action-secondary" id="resetBtn" type="button">
                 Reset
             </button>
-            
-
 
             <button class="btn-action btn-action-primary" id="sendBtn" disabled type="button">
                 <span class="btn-text">Send</span>
@@ -111,7 +98,7 @@
             <div class="modal-content hidden" id="sendingState">
                 <div class="loading-spinner"></div>
                 <h3 class="modal-title">Sending...</h3>
-                <p class="modal-description" id="sendingProgress">0 of 0</p>
+                <p class="modal-description" id="sendingProgress">Preparing...</p>
             </div>
 
             <!-- Success State -->
@@ -178,6 +165,6 @@
     </script>
 
     <!-- App JavaScript -->
-    <script src="/app.js"></script>
+    <script type="module" src="/app.js"></script>
 </body>
 </html>

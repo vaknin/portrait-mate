@@ -31,11 +31,14 @@ function convertToWhatsAppJID(phone: string): string {
     return `${cleaned}@s.whatsapp.net`;
 }
 
+import { ImageService } from '../services/image.js';
+
 export class SocketController {
     constructor(
         private io: Server,
         private cameraService: CameraService,
         private whatsappService: WhatsAppService,
+        private imageService: ImageService,
     ) { }
 
     public handleConnection(socket: Socket): void {
@@ -78,9 +81,28 @@ export class SocketController {
 
             // Send each photo as an event
             for (const filename of jpgFiles) {
+                // Check if thumbnail exists, if not generate it (lazy generation for existing photos)
+                // Actually, for performance, we might just check if it exists or return the path
+                // Let's assume ImageService handles checking/generating or we just send the path
+                // But generateThumbnail is async.
+
+                // For existing photos, we might want to generate thumbnails if they don't exist
+                // but doing it sequentially here might be slow.
+                // For now, let's try to generate/get.
+
+                // Optimization: Fire and forget generation if missing?
+                // Or just send full res if thumb missing?
+
+                // Let's try to get the thumbnail path.
+                // We need to know if the file exists.
+                // ImageService.generateThumbnail checks/creates.
+
+                const thumbnailFilename = await this.imageService.generateThumbnail(join(config.PHOTOS_DIR, filename));
+
                 socket.emit('photo-captured', {
                     filename,
                     path: `/photos/${filename}`,
+                    thumbnail: thumbnailFilename ? `/thumbnails/${thumbnailFilename}` : `/photos/${filename}`
                 });
             }
             logger.debug(`[WebSocket] Sent ${jpgFiles.length} existing photos to ${socket.id}`);
@@ -112,7 +134,7 @@ export class SocketController {
         const jid = convertToWhatsAppJID(phone);
         logger.info(`[Send] Sending ${photos.length} photos to ${phone}`);
 
-        const photoPaths = photos.map((filename) => join(process.cwd(), 'session', filename));
+        const photoPaths = photos.map((filename) => join(config.PHOTOS_DIR, filename));
 
         try {
             const success = await this.whatsappService.sendPhotos(jid, photoPaths);
@@ -136,7 +158,7 @@ export class SocketController {
     private async handleResetSession(socket: Socket): Promise<void> {
         try {
             logger.info(`[Reset] Request from ${socket.id}`);
-            this.cameraService.pause();
+            await this.cameraService.pause();
 
             const files = await readdir(config.PHOTOS_DIR);
             const jpgFiles = files.filter(
@@ -144,6 +166,17 @@ export class SocketController {
             );
 
             await Promise.all(jpgFiles.map((file) => unlink(join(config.PHOTOS_DIR, file))));
+
+            // Also delete thumbnails
+            try {
+                const thumbnailsDir = join(config.PHOTOS_DIR, 'thumbnails');
+                const thumbFiles = await readdir(thumbnailsDir);
+                await Promise.all(thumbFiles.map(f => unlink(join(thumbnailsDir, f))));
+                logger.info(`[Reset] Deleted ${thumbFiles.length} thumbnails`);
+            } catch (err) {
+                // Ignore error if thumbnails dir doesn't exist or is empty
+                logger.debug(`[Reset] No thumbnails to delete or error: ${err}`);
+            }
 
             logger.info(`[Reset] Deleted ${jpgFiles.length} photos`);
             this.cameraService.resume();

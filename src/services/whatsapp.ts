@@ -27,6 +27,8 @@ export class WhatsAppService {
   private maxQRAttempts: number = 5;
   private latestQR: string | null = null; // Store latest QR for late-joining clients
 
+  private offlineQueue: Array<{ jid: string; photoPaths: string[] }> = [];
+
   constructor(config: WhatsAppServiceConfig) {
     this.io = config.io;
     this.authDir = config.authDir || './auth_info';
@@ -95,16 +97,24 @@ export class WhatsAppService {
    * Send photos to a WhatsApp JID (must be in format: 972504203492@s.whatsapp.net)
    */
   async sendPhotos(jid: string, photoPaths: string[]): Promise<boolean> {
-    if (!this.sock || !this.isConnected) {
-      logger.error('[WhatsApp] Cannot send photos: not connected');
-      return false;
-    }
-
     if (photoPaths.length === 0) {
       logger.error('[WhatsApp] No photos to send');
       return false;
     }
 
+    // If not connected, queue the message
+    if (!this.sock || !this.isConnected) {
+      logger.warn('[WhatsApp] Not connected. Queuing message for later.');
+      this.offlineQueue.push({ jid, photoPaths });
+      // Notify frontend that it's queued (optional, but good UX)
+      // For now, we return true to indicate "accepted"
+      return true;
+    }
+
+    return this.processSend(jid, photoPaths);
+  }
+
+  private async processSend(jid: string, photoPaths: string[]): Promise<boolean> {
     const SEND_TIMEOUT = 30000; // 30 seconds per photo
 
     logger.info(`[WhatsApp] Sending ${photoPaths.length} photos to ${jid}...`);
@@ -113,6 +123,9 @@ export class WhatsAppService {
       for (let i = 0; i < photoPaths.length; i++) {
         const photoPath = photoPaths[i];
         logger.info(`[WhatsApp] Sending photo ${i + 1}/${photoPaths.length}: ${photoPath}`);
+
+        // Emit progress event BEFORE sending
+        this.emitProgress(i + 1, photoPaths.length);
 
         try {
           // Read photo file asynchronously
@@ -127,7 +140,7 @@ export class WhatsAppService {
 
           // Send photo via WhatsApp with timeout
           await Promise.race([
-            this.sock.sendMessage(jid, {
+            this.sock!.sendMessage(jid, {
               image: imageBuffer,
               mimetype: 'image/jpeg',
             }),
@@ -137,9 +150,6 @@ export class WhatsAppService {
           ]);
 
           logger.info(`[WhatsApp] Photo ${i + 1}/${photoPaths.length} sent successfully`);
-
-          // Emit progress event
-          this.emitProgress(i + 1, photoPaths.length);
 
           // Small delay between sends to avoid rate limiting
           if (i < photoPaths.length - 1) {
@@ -156,6 +166,26 @@ export class WhatsAppService {
     } catch (error) {
       logger.error(`[WhatsApp] Failed to send photos: ${error}`);
       return false;
+    }
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.offlineQueue.length === 0) return;
+
+    logger.info(`[WhatsApp] Processing offline queue (${this.offlineQueue.length} items)...`);
+
+    // Process queue sequentially
+    while (this.offlineQueue.length > 0) {
+      const item = this.offlineQueue.shift();
+      if (item) {
+        try {
+          await this.processSend(item.jid, item.photoPaths);
+        } catch (error) {
+          logger.error(`[WhatsApp] Error processing queued item: ${error}`);
+          // Optional: Re-queue if it was a transient error?
+          // For now, we drop it to avoid blocking the queue forever
+        }
+      }
     }
   }
 
@@ -265,6 +295,9 @@ export class WhatsAppService {
           this.latestQR = null; // Clear QR code on successful connection
           logger.info('[WhatsApp] Connection opened successfully');
           this.emitStatus(true);
+
+          // Process offline queue
+          this.processQueue();
         } else if (connection === 'connecting') {
           logger.debug('[WhatsApp] Connecting...');
         }

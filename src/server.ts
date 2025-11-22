@@ -23,19 +23,30 @@ const io = new SocketIOServer(httpServer);
 
 import { SocketController } from './controllers/socketController.js';
 
+import { ImageService } from './services/image.js';
+
+import { ConnectController } from './controllers/connectController.js';
+
 // Initialize services
 const cameraService = new CameraService();
 const whatsappService = new WhatsAppService({
   io,
   authDir: config.AUTH_INFO_DIR,
 });
+const imageService = new ImageService();
 
 // Initialize Controllers
-const socketController = new SocketController(io, cameraService, whatsappService);
+const socketController = new SocketController(io, cameraService, whatsappService, imageService);
+const connectController = new ConnectController();
 
 // Middleware
 app.use(express.json());
 app.use(express.static(join(__dirname, '../public')));
+app.use('/thumbnails', express.static(join(config.PHOTOS_DIR, 'thumbnails')));
+app.use('/photos', express.static(config.PHOTOS_DIR));
+
+// Routes
+app.get('/connect', (req, res) => connectController.handleConnect(req, res));
 
 // ==========================================
 // Event Wiring
@@ -46,9 +57,16 @@ cameraService.on('status', (status) => {
   io.emit('camera-status', status);
 });
 
-cameraService.on('photo', (data) => {
-  // Notify frontend directly
-  io.emit('photo-captured', data);
+cameraService.on('photo', async (data) => {
+  // Generate thumbnail
+  const absolutePath = join(config.PHOTOS_DIR, data.filename);
+  const thumbnailFilename = await imageService.generateThumbnail(absolutePath);
+
+  // Notify frontend
+  io.emit('photo-captured', {
+    ...data,
+    thumbnail: thumbnailFilename ? `/thumbnails/${thumbnailFilename}` : data.path
+  });
 });
 
 cameraService.on('error', (error) => {
@@ -58,6 +76,7 @@ cameraService.on('error', (error) => {
 // Start services
 (async () => {
   try {
+    await imageService.init();
     await cameraService.start();
     // logger.info('[Camera] Service started'); // Removed for less verbosity
 
